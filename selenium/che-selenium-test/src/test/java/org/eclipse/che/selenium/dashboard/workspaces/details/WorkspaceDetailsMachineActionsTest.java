@@ -227,8 +227,6 @@ public class WorkspaceDetailsMachineActionsTest {
     final String installerName = "Exec";
     final String serverName = "tomcat8";
 
-    seleniumWebDriver.navigate().back();
-
     // check the "Servers" link
     waitMachineListItemAndClickOnSettingsButton();
     workspaceDetailsMachines.clickOnServersLink();
