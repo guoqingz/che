@@ -76,6 +76,11 @@ export class ListFactoriesController {
     this.pagesInfo = cheAPI.getFactory().getPagesInfo();
   }
 
+  $onInit(): void {
+    // this method won't be called here
+    // place all initialization code in constructor
+  }
+
   /**
    * Provides actual list of factories to helper.
    */
@@ -222,6 +227,6 @@ export class ListFactoriesController {
     } else {
       content += 'this selected factory?';
     }
-    return this.confirmDialogService.showConfirmDialog('Remove factories', content, 'Delete');
+    return this.confirmDialogService.showConfirmDialog('Remove factories', content, { resolve: 'Delete' });
   }
 }

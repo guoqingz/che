@@ -11,13 +11,22 @@
  */
 'use strict';
 
+// tslint:disable:no-any
+
 declare const Keycloak: Function;
+
+declare global {
+    interface Window {
+        _keycloak: any
+    }
+}
+
 export class KeycloakLoader {
     /**
      * Load keycloak settings
      */
     public loadKeycloakSettings(): Promise<any> {
-        const msg = "Cannot load keycloak settings. This is normal for single-user mode.";
+        const msg = 'Cannot load keycloak settings. This is normal for single-user mode.';
 
         return new Promise((resolve, reject) => {
             if (window.parent && window.parent['_keycloak']) {
@@ -25,27 +34,24 @@ export class KeycloakLoader {
                 resolve(window['_keycloak']);
                 return;
             }
-            try {
-                const request = new XMLHttpRequest();
 
-                request.onerror = request.onabort = function () {
-                    reject(msg);
-                };
+            const request = new XMLHttpRequest();
 
-                request.onload = () => {
-                    if (request.status == 200) {
-                        resolve(this.injectKeycloakScript(JSON.parse(request.responseText)));
-                    } else {
-                        reject(new Error('Cannot load keycloak script'));
-                    }
-                };
+            request.onerror = request.onabort = function () {
+                reject(new Error(msg));
+            };
 
-                const url = "/api/keycloak/settings";
-                request.open("GET", url, true);
-                request.send();
-            } catch (e) {
-                reject(msg + e.message);
-            }
+            request.onload = () => {
+                if (request.status === 200) {
+                    resolve(this.injectKeycloakScript(JSON.parse(request.responseText)));
+                } else {
+                    reject(new Error(msg + ' Cannot load keycloak script'));
+                }
+            };
+
+            const url = '/api/keycloak/settings';
+            request.open('GET', url, true);
+            request.send();
         });
     }
 
@@ -56,7 +62,6 @@ export class KeycloakLoader {
         return new Promise((resolve, reject) => {
             const script = document.createElement('script');
             script.type = 'text/javascript';
-            (script as any).language = 'javascript';
             script.async = true;
             script.src = keycloakSettings['che.keycloak.js_adapter_url'];
 
@@ -68,7 +73,10 @@ export class KeycloakLoader {
                 reject('Cannot load ' + script.src);
             };
 
-            document.head.appendChild(script);
+            if (!document.head) {
+                document.createElement('head');
+            }
+            document.head!.appendChild(script);
         });
     }
 
@@ -76,31 +84,32 @@ export class KeycloakLoader {
      * Initialize keycloak and load the IDE
      */
     private initKeycloak(keycloakSettings: any): Promise<any> {
+        function keycloakConfig() {
+            const theOidcProvider = keycloakSettings['che.keycloak.oidc_provider'];
+            if (!theOidcProvider) {
+                return {
+                    url: keycloakSettings['che.keycloak.auth_server_url'],
+                    realm: keycloakSettings['che.keycloak.realm'],
+                    clientId: keycloakSettings['che.keycloak.client_id']
+                };
+            } else {
+                return {
+                    oidcProvider: theOidcProvider,
+                    clientId: keycloakSettings['che.keycloak.client_id']
+                };
+            }
+        }
+        const keycloak = Keycloak(keycloakConfig());
+
+        window['_keycloak'] = keycloak;
+
+        let useNonce: boolean;
+        if (typeof keycloakSettings['che.keycloak.use_nonce'] === 'string') {
+            useNonce = keycloakSettings['che.keycloak.use_nonce'].toLowerCase() === 'true';
+        }
+        window.sessionStorage.setItem('oidcIdeRedirectUrl', location.href);
+
         return new Promise((resolve, reject) => {
-            function keycloakConfig() {
-                const theOidcProvider = keycloakSettings['che.keycloak.oidc_provider'];
-                if (!theOidcProvider) {
-                    return {
-                        url: keycloakSettings['che.keycloak.auth_server_url'],
-                        realm: keycloakSettings['che.keycloak.realm'],
-                        clientId: keycloakSettings['che.keycloak.client_id']
-                    };
-                } else {
-                    return {
-                        oidcProvider: theOidcProvider,
-                        clientId: keycloakSettings['che.keycloak.client_id']
-                    };
-                }
-            }
-            const keycloak = Keycloak(keycloakConfig());            
-
-            window['_keycloak'] = keycloak;
-
-            var useNonce;
-            if (typeof keycloakSettings['che.keycloak.use_nonce'] === 'string') {
-                useNonce = keycloakSettings['che.keycloak.use_nonce'].toLowerCase() === 'true';
-            }
-            window.sessionStorage.setItem('oidcIdeRedirectUrl', location.href);
             keycloak
                 .init({
                     onLoad: 'login-required',

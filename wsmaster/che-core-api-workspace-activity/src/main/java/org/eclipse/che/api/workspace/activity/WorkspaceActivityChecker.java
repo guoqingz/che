@@ -21,6 +21,7 @@ import com.google.inject.Singleton;
 import java.time.Clock;
 import org.eclipse.che.api.core.ConflictException;
 import org.eclipse.che.api.core.NotFoundException;
+import org.eclipse.che.api.core.Pages;
 import org.eclipse.che.api.core.ServerException;
 import org.eclipse.che.api.core.model.workspace.Workspace;
 import org.eclipse.che.api.core.model.workspace.WorkspaceStatus;
@@ -32,9 +33,10 @@ import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
 /**
- * Is in charge of checking the validity of the workspace activity records. The sole important
- * method is {@link #validate()} which is run on a schedule to periodically check the validity of
- * the records and report the potential error conditions.
+ * Is in charge of checking the validity of the workspace activity records. The important methods
+ * are {@link #expire()} which is run on a schedule to periodically stop the expired workspaces and
+ * {@link #cleanup()} which will try to clean up and reconcile the possibly invalid activity
+ * records.
  *
  * @author Lukas Krejci
  */
@@ -83,25 +85,29 @@ public class WorkspaceActivityChecker {
       initialDelayParameterName = "che.workspace.activity_check_scheduler_delay_s",
       delayParameterName = "che.workspace.activity_check_scheduler_period_s")
   @VisibleForTesting
-  void validate() {
-    try {
-      stopAllExpired();
-    } catch (ServerException e) {
-      LOG.error(e.getLocalizedMessage(), e);
-    }
+  void expire() {
+    stopAllExpired();
+  }
 
+  @ScheduleDelay(
+      initialDelayParameterName = "che.workspace.activity_cleanup_scheduler_initial_delay_s",
+      delayParameterName = "che.workspace.activity_cleanup_scheduler_period_s")
+  @VisibleForTesting
+  void cleanup() {
+    checkActivityRecordsValidity();
+
+    reconcileActivityStatuses();
+  }
+
+  private void stopAllExpired() {
     try {
-      checkActivityRecordValidity();
+      activityDao.findExpired(clock.millis()).forEach(this::stopExpiredQuietly);
     } catch (ServerException e) {
-      LOG.error(e.getLocalizedMessage(), e);
+      LOG.error("Failed to list all expired to perform stop. Cause: {}", e.getMessage(), e);
     }
   }
 
-  private void stopAllExpired() throws ServerException {
-    activityDao.findExpired(clock.millis()).forEach(this::stopExpired);
-  }
-
-  private void stopExpired(String workspaceId) {
+  private void stopExpiredQuietly(String workspaceId) {
     try {
       Workspace workspace = workspaceManager.getWorkspace(workspaceId);
       workspace.getAttributes().put(WORKSPACE_STOPPED_BY, ACTIVITY_CHECKER);
@@ -111,45 +117,94 @@ public class WorkspaceActivityChecker {
     } catch (NotFoundException ignored) {
       // workspace no longer exists, no need to do anything
     } catch (ConflictException e) {
-      LOG.warn(e.getLocalizedMessage());
+      LOG.warn(e.getMessage());
     } catch (Exception ex) {
-      LOG.error(ex.getLocalizedMessage());
-      LOG.debug(ex.getLocalizedMessage(), ex);
+      LOG.error(ex.getMessage());
+      LOG.debug(ex.getMessage(), ex);
     } finally {
       try {
         activityDao.removeExpiration(workspaceId);
       } catch (ServerException e) {
-        LOG.error(e.getLocalizedMessage(), e);
+        LOG.error(e.getMessage(), e);
       }
     }
   }
 
-  private void checkActivityRecordValidity() throws ServerException {
+  private void checkActivityRecordsValidity() {
     for (String runningWsId : workspaceRuntimes.getRunning()) {
-      WorkspaceActivity activity = activityDao.findActivity(runningWsId);
-
-      long idleTimeout = workspaceActivityManager.getIdleTimeout(runningWsId);
-
-      if (activity == null) {
-        createMissingActivityRecord(runningWsId, idleTimeout);
-      } else {
-        rectifyCreatedTime(activity);
-
-        // let's use a single value for the current time in all the code below
-        long now = clock.millis();
-
-        // this value is the last recorded activity of any kind on the workspace.
-        // Even though we tried to recover the created_time in the code above, it might still happen
-        // that we failed to do that and that no other activity exists on the workspace.
-        // That's why in the code below we still have to account for the possibility of this value
-        // being null.
-        Long latestActivityTime = getLatestActivityTime(activity);
-
-        // we get true if there was no last running time before
-        boolean noLastRunningTime = rectifyLastRunningTime(activity, now, latestActivityTime);
-
-        rectifyExpirationTime(activity, now, noLastRunningTime, latestActivityTime, idleTimeout);
+      try {
+        checkActivityRecordValidity(runningWsId);
+      } catch (Exception e) {
+        LOG.error(
+            "Failed to check activity record for workspace {}. Cause: {}",
+            runningWsId,
+            e.getMessage(),
+            e);
       }
+    }
+  }
+
+  private void checkActivityRecordValidity(String runningWsId) throws ServerException {
+    WorkspaceActivity activity = activityDao.findActivity(runningWsId);
+
+    long idleTimeout = workspaceActivityManager.getIdleTimeout(runningWsId);
+
+    if (activity == null) {
+      createMissingActivityRecord(runningWsId, idleTimeout);
+    } else {
+      rectifyCreatedTime(activity);
+
+      // let's use a single value for the current time in all the code below
+      long now = clock.millis();
+
+      // this value is the last recorded activity of any kind on the workspace.
+      // Even though we tried to recover the created_time in the code above, it might still happen
+      // that we failed to do that and that no other activity exists on the workspace.
+      // That's why in the code below we still have to account for the possibility of this value
+      // being null.
+      Long latestActivityTime = getLatestActivityTime(activity);
+
+      // we get true if there was no last running time before
+      boolean noLastRunningTime = rectifyLastRunningTime(activity, now, latestActivityTime);
+
+      rectifyExpirationTime(activity, now, noLastRunningTime, latestActivityTime, idleTimeout);
+    }
+  }
+
+  /**
+   * Makes sure that any activity records are rectified if they do not reflect the true state of the
+   * workspace anymore.
+   */
+  private void reconcileActivityStatuses() {
+    try {
+      for (WorkspaceActivity a : Pages.iterateLazily(activityDao::getAll, 200)) {
+        try {
+          reconcileOne(a);
+        } catch (Exception e) {
+          LOG.error(
+              "Failed to reconcile activity for workspace {}. Cause: {}",
+              a.getWorkspaceId(),
+              e.getMessage(),
+              e);
+        }
+      }
+    } catch (RuntimeException e) {
+      LOG.error("Failed to load all activites to reconcile them. Cause: {}", e.getMessage(), e);
+    }
+  }
+
+  private void reconcileOne(WorkspaceActivity a) throws ServerException {
+    WorkspaceStatus status = workspaceRuntimes.getStatus(a.getWorkspaceId());
+    if (a.getStatus() != status) {
+      if (LOG.isWarnEnabled()) {
+        LOG.warn(
+            "Activity record for workspace {} was registering {} status while the workspace was {} in reality."
+                + " Rectifying the activity record to reflect the true state of the workspace.",
+            a.getWorkspaceId(),
+            a.getStatus(),
+            status);
+      }
+      activityDao.setStatusChangeTime(a.getWorkspaceId(), status, clock.millis());
     }
   }
 
@@ -337,7 +392,7 @@ public class WorkspaceActivityChecker {
   /**
    * Makes sure the activity of a running workspace has a last running time. The activity won't have
    * a last running time very shortly after it was found running by the runtime before our event
-   * handler updated the activity record. If the schedule of the {@link #validate()} method precedes
+   * handler updated the activity record. If the schedule of the {@link #cleanup()} method precedes
    * or coincides with the event handler we might not see the value. Otherwise this can
    * theoretically also happen when the server is stopped at an unfortunate point in time while the
    * workspace is starting and/or running and before the event handler had a chance of updating the
@@ -362,7 +417,7 @@ public class WorkspaceActivityChecker {
       LOG.warn(
           "Workspace '{}' has been found running yet there is an activity on it newer than the"
               + " last running time. This should not happen. Resetting the last running time to"
-              + " the newest activity time. The activity record is this: ",
+              + " the newest activity time. The activity record is this: {}",
           wsId,
           activity.toString());
       activityDao.setStatusChangeTime(wsId, WorkspaceStatus.RUNNING, latestActivityTime);

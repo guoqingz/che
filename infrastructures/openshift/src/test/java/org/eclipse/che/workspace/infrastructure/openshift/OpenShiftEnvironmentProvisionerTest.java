@@ -17,12 +17,14 @@ import static org.mockito.Mockito.inOrder;
 import org.eclipse.che.api.core.model.workspace.runtime.RuntimeIdentity;
 import org.eclipse.che.workspace.infrastructure.kubernetes.namespace.pvc.WorkspaceVolumesStrategy;
 import org.eclipse.che.workspace.infrastructure.kubernetes.provision.CertificateProvisioner;
+import org.eclipse.che.workspace.infrastructure.kubernetes.provision.GitConfigProvisioner;
 import org.eclipse.che.workspace.infrastructure.kubernetes.provision.ImagePullSecretProvisioner;
-import org.eclipse.che.workspace.infrastructure.kubernetes.provision.InstallerServersPortProvisioner;
 import org.eclipse.che.workspace.infrastructure.kubernetes.provision.LogsVolumeMachineProvisioner;
 import org.eclipse.che.workspace.infrastructure.kubernetes.provision.PodTerminationGracePeriodProvisioner;
 import org.eclipse.che.workspace.infrastructure.kubernetes.provision.ProxySettingsProvisioner;
 import org.eclipse.che.workspace.infrastructure.kubernetes.provision.ServiceAccountProvisioner;
+import org.eclipse.che.workspace.infrastructure.kubernetes.provision.VcsSshKeysProvisioner;
+import org.eclipse.che.workspace.infrastructure.kubernetes.provision.VcsSslCertificateProvisioner;
 import org.eclipse.che.workspace.infrastructure.kubernetes.provision.env.EnvVarsConverter;
 import org.eclipse.che.workspace.infrastructure.kubernetes.provision.limits.ram.RamLimitRequestProvisioner;
 import org.eclipse.che.workspace.infrastructure.kubernetes.provision.restartpolicy.RestartPolicyRewriter;
@@ -30,6 +32,7 @@ import org.eclipse.che.workspace.infrastructure.kubernetes.provision.server.Serv
 import org.eclipse.che.workspace.infrastructure.openshift.environment.OpenShiftEnvironment;
 import org.eclipse.che.workspace.infrastructure.openshift.provision.OpenShiftUniqueNamesProvisioner;
 import org.eclipse.che.workspace.infrastructure.openshift.provision.RouteTlsProvisioner;
+import org.eclipse.che.workspace.infrastructure.openshift.server.OpenShiftPreviewUrlExposer;
 import org.mockito.InOrder;
 import org.mockito.Mock;
 import org.mockito.testng.MockitoTestNGListener;
@@ -46,7 +49,6 @@ import org.testng.annotations.Test;
 public class OpenShiftEnvironmentProvisionerTest {
 
   @Mock private WorkspaceVolumesStrategy volumesStrategy;
-  @Mock private InstallerServersPortProvisioner installerServersPortProvisioner;
   @Mock private OpenShiftUniqueNamesProvisioner uniqueNamesProvisioner;
   @Mock private OpenShiftEnvironment osEnv;
   @Mock private RuntimeIdentity runtimeIdentity;
@@ -61,6 +63,10 @@ public class OpenShiftEnvironmentProvisionerTest {
   @Mock private ProxySettingsProvisioner proxySettingsProvisioner;
   @Mock private ServiceAccountProvisioner serviceAccountProvisioner;
   @Mock private CertificateProvisioner certificateProvisioner;
+  @Mock private VcsSshKeysProvisioner vcsSshKeysProvisioner;
+  @Mock private GitConfigProvisioner gitConfigProvisioner;
+  @Mock private OpenShiftPreviewUrlExposer previewUrlEndpointsProvisioner;
+  @Mock private VcsSslCertificateProvisioner vcsSslCertificateProvisioner;
 
   private OpenShiftEnvironmentProvisioner osInfraProvisioner;
 
@@ -78,16 +84,18 @@ public class OpenShiftEnvironmentProvisionerTest {
             restartPolicyRewriter,
             volumesStrategy,
             ramLimitProvisioner,
-            installerServersPortProvisioner,
             logsVolumeMachineProvisioner,
             podTerminationGracePeriodProvisioner,
             imagePullSecretProvisioner,
             proxySettingsProvisioner,
             serviceAccountProvisioner,
-            certificateProvisioner);
+            certificateProvisioner,
+            vcsSshKeysProvisioner,
+            gitConfigProvisioner,
+            previewUrlEndpointsProvisioner,
+            vcsSslCertificateProvisioner);
     provisionOrder =
         inOrder(
-            installerServersPortProvisioner,
             logsVolumeMachineProvisioner,
             serversProvisioner,
             envVarsProvisioner,
@@ -100,16 +108,17 @@ public class OpenShiftEnvironmentProvisionerTest {
             imagePullSecretProvisioner,
             proxySettingsProvisioner,
             serviceAccountProvisioner,
-            certificateProvisioner);
+            certificateProvisioner,
+            vcsSshKeysProvisioner,
+            vcsSslCertificateProvisioner,
+            gitConfigProvisioner,
+            previewUrlEndpointsProvisioner);
   }
 
   @Test
   public void performsOrderedProvisioning() throws Exception {
     osInfraProvisioner.provision(osEnv, runtimeIdentity);
 
-    provisionOrder
-        .verify(installerServersPortProvisioner)
-        .provision(eq(osEnv), eq(runtimeIdentity));
     provisionOrder.verify(logsVolumeMachineProvisioner).provision(eq(osEnv), eq(runtimeIdentity));
     provisionOrder.verify(serversProvisioner).provision(eq(osEnv), eq(runtimeIdentity));
     provisionOrder.verify(envVarsProvisioner).provision(eq(osEnv), eq(runtimeIdentity));
@@ -125,6 +134,9 @@ public class OpenShiftEnvironmentProvisionerTest {
     provisionOrder.verify(proxySettingsProvisioner).provision(eq(osEnv), eq(runtimeIdentity));
     provisionOrder.verify(serviceAccountProvisioner).provision(eq(osEnv), eq(runtimeIdentity));
     provisionOrder.verify(certificateProvisioner).provision(eq(osEnv), eq(runtimeIdentity));
+    provisionOrder.verify(vcsSshKeysProvisioner).provision(eq(osEnv), eq(runtimeIdentity));
+    provisionOrder.verify(vcsSslCertificateProvisioner).provision(eq(osEnv), eq(runtimeIdentity));
+    provisionOrder.verify(gitConfigProvisioner).provision(eq(osEnv), eq(runtimeIdentity));
     provisionOrder.verifyNoMoreInteractions();
   }
 }

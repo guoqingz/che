@@ -43,6 +43,22 @@ public class KubernetesObjectUtil {
 
   private static final String STORAGE_PARAM = "storage";
 
+  /** Checks if the specified object has the specified label. */
+  public static boolean isLabeled(HasMetadata source, String key, String value) {
+    ObjectMeta metadata = source.getMetadata();
+
+    if (metadata == null) {
+      return false;
+    }
+
+    Map<String, String> labels = metadata.getLabels();
+    if (labels == null) {
+      return false;
+    }
+
+    return value.equals(labels.get(key));
+  }
+
   /** Adds label to target Kubernetes object. */
   public static void putLabel(HasMetadata target, String key, String value) {
     ObjectMeta metadata = target.getMetadata();
@@ -72,6 +88,11 @@ public class KubernetesObjectUtil {
       target.setMetadata(metadata = new ObjectMeta());
     }
 
+    putAnnotation(metadata, key, value);
+  }
+
+  /** Adds annotation to target ObjectMeta object. */
+  public static void putAnnotation(ObjectMeta metadata, String key, String value) {
     Map<String, String> annotations = metadata.getAnnotations();
     if (annotations == null) {
       metadata.setAnnotations(annotations = new HashMap<>());

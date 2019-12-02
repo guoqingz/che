@@ -13,6 +13,7 @@ package org.eclipse.che.api.factory.server.urlfactory;
 
 import static com.google.common.base.Strings.isNullOrEmpty;
 import static org.eclipse.che.api.factory.shared.Constants.CURRENT_VERSION;
+import static org.eclipse.che.api.workspace.server.devfile.Constants.CURRENT_API_VERSION;
 import static org.eclipse.che.api.workspace.shared.Constants.WORKSPACE_TOOLING_EDITOR_ATTRIBUTE;
 import static org.eclipse.che.api.workspace.shared.Constants.WORKSPACE_TOOLING_PLUGINS_ATTRIBUTE;
 import static org.eclipse.che.dto.server.DtoFactory.newDto;
@@ -25,15 +26,18 @@ import javax.inject.Named;
 import javax.inject.Singleton;
 import org.eclipse.che.api.core.BadRequestException;
 import org.eclipse.che.api.core.ServerException;
-import org.eclipse.che.api.devfile.server.DevfileManager;
-import org.eclipse.che.api.devfile.server.FileContentProvider;
-import org.eclipse.che.api.devfile.server.URLFetcher;
-import org.eclipse.che.api.devfile.server.exception.DevfileException;
 import org.eclipse.che.api.factory.shared.dto.FactoryDto;
 import org.eclipse.che.api.workspace.server.DtoConverter;
-import org.eclipse.che.api.workspace.server.model.impl.WorkspaceConfigImpl;
+import org.eclipse.che.api.workspace.server.devfile.DevfileManager;
+import org.eclipse.che.api.workspace.server.devfile.FileContentProvider;
+import org.eclipse.che.api.workspace.server.devfile.URLFetcher;
+import org.eclipse.che.api.workspace.server.devfile.exception.DevfileException;
+import org.eclipse.che.api.workspace.server.devfile.exception.OverrideParameterException;
 import org.eclipse.che.api.workspace.server.model.impl.devfile.DevfileImpl;
+import org.eclipse.che.api.workspace.server.model.impl.devfile.MetadataImpl;
 import org.eclipse.che.api.workspace.shared.dto.WorkspaceConfigDto;
+import org.eclipse.che.api.workspace.shared.dto.devfile.DevfileDto;
+import org.eclipse.che.api.workspace.shared.dto.devfile.MetadataDto;
 import org.eclipse.che.dto.server.DtoFactory;
 
 /**
@@ -86,14 +90,24 @@ public class URLFactoryBuilder {
   }
 
   /**
-   * Build a factory using the provided devfile
+   * Build a factory using the provided devfile. Allows to override devfile properties using
+   * specially constructed map {@see DevfileManager#parseYaml(String, Map)}.
+   *
+   * <p>We want factory to never fail due to name collision. Taking `generateName` with precedence.
+   * <br>
+   * If devfile has only `name`, we convert it to `generateName`. <br>
+   * If devfile has `name` and `generateName`, we remove `name` and use just `generateName`. <br>
+   * If devfile has `generateName`, we use that.
    *
    * @param remoteFactoryUrl parsed factory URL object
    * @param fileContentProvider service-specific devfile related file content provider
+   * @param overrideProperties map of overridden properties to apply in devfile
    * @return a factory or null if devfile is not found
    */
   public Optional<FactoryDto> createFactoryFromDevfile(
-      RemoteFactoryUrl remoteFactoryUrl, FileContentProvider fileContentProvider)
+      RemoteFactoryUrl remoteFactoryUrl,
+      FileContentProvider fileContentProvider,
+      Map<String, String> overrideProperties)
       throws BadRequestException, ServerException {
     if (remoteFactoryUrl.devfileFileLocation() == null) {
       return Optional.empty();
@@ -104,22 +118,40 @@ public class URLFactoryBuilder {
       return Optional.empty();
     }
     try {
-      DevfileImpl devfile = devfileManager.parse(devfileYamlContent);
-      WorkspaceConfigImpl wsConfig =
-          devfileManager.createWorkspaceConfig(devfile, fileContentProvider);
+      DevfileImpl devfile = devfileManager.parseYaml(devfileYamlContent, overrideProperties);
+      devfileManager.resolveReference(devfile, fileContentProvider);
+      devfile = ensureToUseGenerateName(devfile);
+
       FactoryDto factoryDto =
           newDto(FactoryDto.class)
               .withV(CURRENT_VERSION)
-              .withWorkspace(DtoConverter.asDto(wsConfig))
+              .withDevfile(DtoConverter.asDto(devfile))
               .withSource(remoteFactoryUrl.getDevfileFilename());
       return Optional.of(factoryDto);
-    } catch (DevfileException e) {
+    } catch (DevfileException | OverrideParameterException e) {
       throw new BadRequestException(
           "Error occurred during creation a workspace from devfile located at `"
               + remoteFactoryUrl.devfileFileLocation()
               + "`. Cause: "
               + e.getMessage());
     }
+  }
+
+  /**
+   * Creates devfile with only `generateName` and no `name`. We take `generateName` with precedence.
+   * See doc of {@link URLFactoryBuilder#createFactoryFromDevfile(RemoteFactoryUrl,
+   * FileContentProvider, Map)} for explanation why.
+   */
+  private DevfileImpl ensureToUseGenerateName(DevfileImpl devfile) {
+    MetadataImpl devfileMetadata = new MetadataImpl(devfile.getMetadata());
+    if (isNullOrEmpty(devfileMetadata.getGenerateName())) {
+      devfileMetadata.setGenerateName(devfileMetadata.getName());
+    }
+    devfileMetadata.setName(null);
+
+    DevfileImpl devfileWithProperName = new DevfileImpl(devfile);
+    devfileWithProperName.setMetadata(devfileMetadata);
+    return devfileWithProperName;
   }
 
   /**
@@ -136,5 +168,19 @@ public class URLFactoryBuilder {
 
     // workspace configuration using the environment
     return newDto(WorkspaceConfigDto.class).withName(name).withAttributes(attributes);
+  }
+
+  /**
+   * Help to generate default workspace devfile. Also initialise project in it
+   *
+   * @param name the name that will be used as `generateName` in the devfile
+   * @return a workspace devfile
+   */
+  public DevfileDto buildDefaultDevfile(String name) {
+
+    // workspace configuration using the environment
+    return newDto(DevfileDto.class)
+        .withApiVersion(CURRENT_API_VERSION)
+        .withMetadata(newDto(MetadataDto.class).withGenerateName(name));
   }
 }

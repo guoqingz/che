@@ -11,13 +11,14 @@
  */
 package org.eclipse.che.api.core.model.workspace.devfile;
 
+import java.io.Serializable;
 import java.util.List;
 import java.util.Map;
 
 public interface Component {
 
-  /** Returns the name of the component. Is mandator and must be unique per components set. */
-  String getName();
+  /** Returns the alias of the component. Is optional and must be unique per components set. */
+  String getAlias();
 
   /**
    * Returns type of the component, e.g. whether it is an plugin or editor or other type. It is
@@ -29,10 +30,25 @@ public interface Component {
   String getId();
 
   /**
-   * Returns absolute or devfile-relative location of Kubernetes list yaml file. It is mandatory and
-   * applicable only for 'kubernetes' and 'openshift' components types.
+   * Returns the preferences of the plugin. Example value of preference: {@code java.home:
+   * /home/user/jdk11}
+   */
+  Map<String, Serializable> getPreferences();
+
+  /**
+   * For 'kubernetes' and 'openshift' components types, returns absolute or devfile-relative
+   * location of Kubernetes list yaml file.
+   *
+   * <p>For 'cheEditor' and 'chePlugin' components types, returns absolute location of plugin
+   * descriptor (typically, named meta.yaml). For those types this field is optional.
    */
   String getReference();
+
+  /**
+   * Returns address of custom plugin registry. It is optional and applicable only for 'cheEditor'
+   * and 'chePlugin' components types.
+   */
+  String getRegistryUrl();
 
   /**
    * Returns inlined content of a file specified in field 'reference'. It is optional and applicable
@@ -75,7 +91,7 @@ public interface Component {
    * optional and applicable only for 'dockerimage' component type. `CHE_PROJECTS_ROOT` environment
    * variable should contains a path where projects sources are mount.
    */
-  boolean getMountSources();
+  Boolean getMountSources();
 
   /**
    * Returns the command to run in the dockerimage component instead of the default one provided in

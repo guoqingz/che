@@ -15,6 +15,7 @@ import static org.eclipse.che.selenium.core.CheSeleniumSuiteModule.AUXILIARY;
 import static org.eclipse.che.selenium.core.TestGroup.GITHUB;
 import static org.eclipse.che.selenium.core.TestGroup.OPENSHIFT;
 import static org.eclipse.che.selenium.core.constant.TestTimeoutsConstants.UPDATING_PROJECT_TIMEOUT_SEC;
+import static org.testng.AssertJUnit.assertEquals;
 
 import com.google.inject.Inject;
 import com.google.inject.name.Named;
@@ -22,6 +23,7 @@ import java.nio.file.Path;
 import java.nio.file.Paths;
 import java.util.Arrays;
 import java.util.List;
+import org.eclipse.che.selenium.core.SeleniumWebDriver;
 import org.eclipse.che.selenium.core.client.TestGitHubRepository;
 import org.eclipse.che.selenium.core.factory.TestFactory;
 import org.eclipse.che.selenium.core.factory.TestFactoryInitializer;
@@ -29,19 +31,25 @@ import org.eclipse.che.selenium.pageobject.theia.TheiaIde;
 import org.eclipse.che.selenium.pageobject.theia.TheiaProjectTree;
 import org.eclipse.che.selenium.pageobject.theia.TheiaProposalForm;
 import org.eclipse.che.selenium.pageobject.theia.TheiaTerminal;
-import org.openqa.selenium.Keys;
+import org.openqa.selenium.TimeoutException;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
 import org.testng.annotations.AfterClass;
 import org.testng.annotations.BeforeClass;
 import org.testng.annotations.Test;
 
 @Test(groups = {GITHUB, OPENSHIFT})
 public class DirectUrlFactoryWithSpecificBranchTest {
+  private static final Logger LOG =
+      LoggerFactory.getLogger(DirectUrlFactoryWithSpecificBranchTest.class);
+
   private static final String SECOND_BRANCH_NAME = "contrib";
 
   @Inject
   @Named(AUXILIARY)
   private TestGitHubRepository testAuxiliaryRepo;
 
+  @Inject private SeleniumWebDriver seleniumWebDriver;
   @Inject private TestFactoryInitializer testFactoryInitializer;
   @Inject private TheiaIde theiaIde;
   @Inject private TheiaProjectTree theiaProjectTree;
@@ -66,50 +74,47 @@ public class DirectUrlFactoryWithSpecificBranchTest {
 
   @AfterClass
   public void deleteTestBranch() throws Exception {
-    testFactoryWithSpecificBranch.delete();
+    try {
+      testFactoryWithSpecificBranch.delete();
+    } catch (Exception e) {
+      LOG.warn("It was impossible to remove factory.", e);
+    }
   }
 
   @Test
   public void factoryWithDirectUrlWithSpecificBranch() {
     String repositoryName = testAuxiliaryRepo.getName();
-    final String wsTheiaIdeTerminalTitle = "che-workspace-pod/theia-ide terminal 0";
-    List<String> expectedItemsAfterCloning = Arrays.asList("my-lib", "my-webapp", "src", "pom.xml");
+    final String wsTheiaIdeTerminalTitle = "theia-ide terminal 0";
+    List<String> expectedItemsAfterCloning =
+        Arrays.asList("my-lib", "my-webapp", "my-lib/src", "pom.xml");
 
     testFactoryWithSpecificBranch.authenticateAndOpen();
 
     theiaIde.switchToIdeFrame();
     theiaIde.waitTheiaIde();
     theiaIde.waitLoaderInvisibility();
-    theiaIde.waitNotificationEqualsTo("Che Workspace: Finished cloning projects.");
     theiaIde.waitNotificationDisappearance(
         "Che Workspace: Finished cloning projects.", UPDATING_PROJECT_TIMEOUT_SEC);
 
     theiaProjectTree.waitFilesTab();
     theiaProjectTree.clickOnFilesTab();
-    theiaProjectTree.waitProjectsRootItem();
-
     theiaProjectTree.waitItem(repositoryName);
-    theiaProjectTree.openItem(repositoryName + "/my-lib");
+    theiaIde.waitAllNotificationsClosed();
+    theiaProjectTree.expandItem(repositoryName);
+    theiaProjectTree.waitItem(repositoryName + "/pom.xml");
+    theiaProjectTree.expandItem(repositoryName + "/my-lib");
     theiaProjectTree.waitItem(repositoryName + "/my-lib/src");
-
     expectedItemsAfterCloning.forEach(
         name -> {
-          theiaProjectTree.isItemVisible(repositoryName + "/" + name);
+          try {
+            theiaProjectTree.waitItem(repositoryName + "/" + name);
+          } catch (TimeoutException ex) {
+            seleniumWebDriver.navigate().refresh();
+            theiaProjectTree.waitItem(repositoryName + "/" + name);
+          }
         });
 
     // check specific branch
-    openTerminalByProposal("che-workspace-pod/theia-ide");
-    theiaTerminal.waitTab(wsTheiaIdeTerminalTitle);
-    theiaTerminal.clickOnTab(wsTheiaIdeTerminalTitle);
-    theiaTerminal.performCommand("cd " + repositoryName);
-    theiaTerminal.performCommand("git status");
-    theiaTerminal.waitTerminalOutput("On branch " + SECOND_BRANCH_NAME, 0);
-  }
-
-  private void openTerminalByProposal(String proposalText) {
-    theiaIde.pressKeyCombination(Keys.LEFT_CONTROL, "`");
-    theiaProposalForm.waitProposal(proposalText);
-    theiaProposalForm.clickOnProposal(proposalText);
-    theiaProposalForm.waitFormDisappearance();
+    assertEquals(theiaIde.getBranchName(), SECOND_BRANCH_NAME);
   }
 }

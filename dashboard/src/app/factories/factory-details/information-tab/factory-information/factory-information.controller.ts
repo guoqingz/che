@@ -32,6 +32,7 @@ export class FactoryInformationController {
   private $timeout: ng.ITimeoutService;
   private lodash: any;
   private $filter: ng.IFilterService;
+  private cheBranding: CheBranding;
 
   private timeoutPromise: ng.IPromise<any>;
   private editorLoadedPromise: ng.IPromise<any>;
@@ -73,7 +74,7 @@ export class FactoryInformationController {
     this.lodash = lodash;
     this.$filter = $filter;
     this.confirmDialogService = confirmDialogService;
-    this.factoryDocs = cheBranding.getDocs().factory;
+    this.cheBranding = cheBranding;
 
     this.timeoutPromise = null;
     $scope.$on('$destroy', () => {
@@ -97,12 +98,16 @@ export class FactoryInformationController {
 
     this.stackRecipeMode = 'current-recipe';
 
-    this.updateData();
     $scope.$watch(() => {
       return this.factory;
     }, () => {
       this.updateData();
     });
+  }
+
+  $onInit(): void {
+    this.factoryDocs = this.cheBranding.getDocs().factory;
+    this.updateData();
   }
 
   /**
@@ -213,7 +218,7 @@ export class FactoryInformationController {
 
     const title = 'Warning',
       content = `You have unsaved changes in JSON configuration. Would you like to save changes now?`;
-    return this.confirmDialogService.showConfirmDialog(title, content, 'Continue').then(() => {
+    return this.confirmDialogService.showConfirmDialog(title, content, { resolve: 'Continue' }).then(() => {
       this.updateFactoryContent();
     });
   }
@@ -291,7 +296,7 @@ export class FactoryInformationController {
    */
   deleteFactory(): void {
     let content = 'Please confirm removal for the factory \'' + (this.factory.name ? this.factory.name : this.factory.id) + '\'.';
-    let promise = this.confirmDialogService.showConfirmDialog('Remove the factory', content, 'Delete');
+    let promise = this.confirmDialogService.showConfirmDialog('Remove the factory', content, { resolve: 'Delete' });
 
     promise.then(() => {
       // remove it !

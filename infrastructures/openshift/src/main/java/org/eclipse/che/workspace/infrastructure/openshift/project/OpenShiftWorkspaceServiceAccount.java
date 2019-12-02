@@ -11,6 +11,8 @@
  */
 package org.eclipse.che.workspace.infrastructure.openshift.project;
 
+import static com.google.common.base.Strings.isNullOrEmpty;
+
 import io.fabric8.kubernetes.api.model.ObjectReferenceBuilder;
 import io.fabric8.openshift.api.model.PolicyRuleBuilder;
 import io.fabric8.openshift.api.model.Role;
@@ -20,6 +22,8 @@ import io.fabric8.openshift.api.model.RoleBuilder;
 import io.fabric8.openshift.client.OpenShiftClient;
 import org.eclipse.che.api.workspace.server.spi.InfrastructureException;
 import org.eclipse.che.workspace.infrastructure.openshift.OpenShiftClientFactory;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
 
 /**
  * Holds logic for preparing workspace service account.
@@ -32,25 +36,33 @@ import org.eclipse.che.workspace.infrastructure.openshift.OpenShiftClientFactory
  */
 class OpenShiftWorkspaceServiceAccount {
 
+  private static final Logger LOG = LoggerFactory.getLogger(OpenShiftWorkspaceServiceAccount.class);
+
   private final String projectName;
   private final String serviceAccountName;
   private final OpenShiftClientFactory clientFactory;
   private final String workspaceId;
+  private final String clusterRoleName;
 
   OpenShiftWorkspaceServiceAccount(
       String workspaceId,
       String projectName,
       String serviceAccountName,
+      String clusterRoleName,
       OpenShiftClientFactory clientFactory) {
     this.workspaceId = workspaceId;
     this.projectName = projectName;
     this.serviceAccountName = serviceAccountName;
+    this.clusterRoleName = clusterRoleName;
     this.clientFactory = clientFactory;
   }
 
   /**
    * Make sure that workspace service account exists and has `view` and `exec` role bindings, as
    * well as create workspace-view and exec roles in namespace scope
+   *
+   * <p>Do NOT make any changes to the service account if it already exists in the namespace to
+   * preserve its configuration done by someone else.
    *
    * @throws InfrastructureException when any exception occurred
    */
@@ -60,6 +72,8 @@ class OpenShiftWorkspaceServiceAccount {
     if (osClient.serviceAccounts().inNamespace(projectName).withName(serviceAccountName).get()
         == null) {
       createWorkspaceServiceAccount(osClient);
+    } else {
+      return;
     }
 
     String execRoleName = "exec";
@@ -74,6 +88,21 @@ class OpenShiftWorkspaceServiceAccount {
 
     osClient.roleBindings().inNamespace(projectName).createOrReplace(createExecRoleBinding());
     osClient.roleBindings().inNamespace(projectName).createOrReplace(createViewRoleBinding());
+
+    // If the user specified an additional cluster role for the workspace,
+    // create a role binding for it too
+    if (!isNullOrEmpty(this.clusterRoleName)) {
+      if (osClient.rbac().kubernetesClusterRoles().withName(this.clusterRoleName).get() != null) {
+        osClient
+            .roleBindings()
+            .inNamespace(projectName)
+            .createOrReplace(createCustomRoleBinding(this.clusterRoleName));
+      } else {
+        LOG.warn(
+            "Unable to find the cluster role {}. Skip creating custom role binding.",
+            this.clusterRoleName);
+      }
+    }
   }
 
   private void createWorkspaceServiceAccount(OpenShiftClient osClient) {
@@ -139,6 +168,23 @@ class OpenShiftWorkspaceServiceAccount {
         .withNewRoleRef()
         .withName("exec")
         .withNamespace(projectName)
+        .endRoleRef()
+        .withSubjects(
+            new ObjectReferenceBuilder()
+                .withKind("ServiceAccount")
+                .withName(serviceAccountName)
+                .build())
+        .build();
+  }
+
+  private RoleBinding createCustomRoleBinding(String clusterRoleName) {
+    return new RoleBindingBuilder()
+        .withNewMetadata()
+        .withName(serviceAccountName + "-custom")
+        .withNamespace(projectName)
+        .endMetadata()
+        .withNewRoleRef()
+        .withName(clusterRoleName)
         .endRoleRef()
         .withSubjects(
             new ObjectReferenceBuilder()

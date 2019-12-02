@@ -19,18 +19,22 @@ import com.google.common.annotations.Beta;
 import com.google.common.collect.ImmutableSet;
 import io.fabric8.kubernetes.api.model.ConfigMap;
 import io.fabric8.kubernetes.api.model.Pod;
+import io.fabric8.kubernetes.api.model.Secret;
 import io.opentracing.Span;
 import io.opentracing.Tracer;
 import java.util.List;
 import java.util.Map;
+import org.eclipse.che.api.core.model.workspace.runtime.RuntimeIdentity;
 import org.eclipse.che.api.workspace.server.spi.InfrastructureException;
 import org.eclipse.che.api.workspace.server.spi.InternalInfrastructureException;
 import org.eclipse.che.api.workspace.server.wsplugins.model.ChePlugin;
 import org.eclipse.che.commons.tracing.TracingTags;
+import org.eclipse.che.workspace.infrastructure.kubernetes.RuntimeLogsPublisher;
 import org.eclipse.che.workspace.infrastructure.kubernetes.environment.KubernetesEnvironment;
 import org.eclipse.che.workspace.infrastructure.kubernetes.namespace.KubernetesDeployments;
 import org.eclipse.che.workspace.infrastructure.kubernetes.namespace.KubernetesNamespace;
 import org.eclipse.che.workspace.infrastructure.kubernetes.namespace.event.PodEvent;
+import org.eclipse.che.workspace.infrastructure.kubernetes.util.RuntimeEventsPublisher;
 import org.eclipse.che.workspace.infrastructure.kubernetes.util.UnrecoverablePodEventListener;
 import org.eclipse.che.workspace.infrastructure.kubernetes.util.UnrecoverablePodEventListenerFactory;
 import org.eclipse.che.workspace.infrastructure.kubernetes.wsplugins.BrokersResult;
@@ -49,33 +53,36 @@ public class DeployBroker extends BrokerPhase {
 
   private static final Logger LOG = getLogger(DeployBroker.class);
 
+  private final RuntimeEventsPublisher runtimeEventsPublisher;
   private final KubernetesNamespace namespace;
   private final KubernetesEnvironment brokerEnvironment;
   private final BrokersResult brokersResult;
   private final UnrecoverablePodEventListenerFactory factory;
-  private final String workspaceId;
+  private final RuntimeIdentity runtimeId;
   private final Tracer tracer;
 
   public DeployBroker(
-      String workspaceId,
+      RuntimeIdentity runtimeId,
       KubernetesNamespace namespace,
       KubernetesEnvironment brokerEnvironment,
       BrokersResult brokersResult,
       UnrecoverablePodEventListenerFactory factory,
+      RuntimeEventsPublisher runtimeEventsPublisher,
       Tracer tracer) {
-    this.workspaceId = workspaceId;
+    this.runtimeId = runtimeId;
     this.namespace = namespace;
     this.brokerEnvironment = brokerEnvironment;
     this.brokersResult = brokersResult;
     this.factory = factory;
+    this.runtimeEventsPublisher = runtimeEventsPublisher;
     this.tracer = tracer;
   }
 
   @Override
   public List<ChePlugin> execute() throws InfrastructureException {
-    LOG.debug("Starting brokers pod for workspace '{}'", workspaceId);
+    LOG.debug("Starting brokers pod for workspace '{}'", runtimeId.getWorkspaceId());
     Span tracingSpan = tracer.buildSpan(DEPLOY_BROKER_PHASE).start();
-    TracingTags.WORKSPACE_ID.set(tracingSpan, workspaceId);
+    TracingTags.WORKSPACE_ID.set(tracingSpan, runtimeId.getWorkspaceId());
 
     KubernetesDeployments deployments = namespace.deployments();
     try {
@@ -83,6 +90,10 @@ public class DeployBroker extends BrokerPhase {
       // broker in a workspace.
       for (ConfigMap configMap : brokerEnvironment.getConfigMaps().values()) {
         namespace.configMaps().create(configMap);
+      }
+
+      for (Secret secret : brokerEnvironment.getSecrets().values()) {
+        namespace.secrets().create(secret);
       }
 
       Pod pluginBrokerPod = getPluginBrokerPod(brokerEnvironment.getPodsCopy());
@@ -95,9 +106,17 @@ public class DeployBroker extends BrokerPhase {
         namespace.deployments().watchEvents(unrecoverableEventListener);
       }
 
+      namespace
+          .deployments()
+          .watchEvents(
+              new RuntimeLogsPublisher(
+                  runtimeEventsPublisher,
+                  runtimeId,
+                  ImmutableSet.of(pluginBrokerPod.getMetadata().getName())));
+
       deployments.create(pluginBrokerPod);
 
-      LOG.debug("Brokers pod is created for workspace '{}'", workspaceId);
+      LOG.debug("Brokers pod is created for workspace '{}'", runtimeId.getWorkspaceId());
       tracingSpan.finish();
       return nextPhase.execute();
     } catch (InfrastructureException e) {
@@ -113,6 +132,11 @@ public class DeployBroker extends BrokerPhase {
         LOG.error("Brokers pod removal failed. Error: " + e.getLocalizedMessage(), e);
       }
       try {
+        namespace.secrets().delete();
+      } catch (InfrastructureException ex) {
+        LOG.error("Brokers secret removal failed. Error: " + ex.getLocalizedMessage(), ex);
+      }
+      try {
         namespace.configMaps().delete();
       } catch (InfrastructureException ex) {
         LOG.error("Brokers config map removal failed. Error: " + ex.getLocalizedMessage(), ex);
@@ -124,8 +148,8 @@ public class DeployBroker extends BrokerPhase {
     String reason = podEvent.getReason();
     String message = podEvent.getMessage();
     LOG.error(
-        "Unrecoverable event occurred during plugin broking for workspace '{}' startup: {}, {}, {}",
-        workspaceId,
+        "Unrecoverable event occurred during plugin brokering for workspace '{}' startup: {}, {}, {}",
+        runtimeId.getWorkspaceId(),
         reason,
         message,
         podEvent.getPodName());
@@ -142,7 +166,7 @@ public class DeployBroker extends BrokerPhase {
           format(
               "Plugin broker environment must have only "
                   + "one pod. Workspace `%s` contains `%s` pods.",
-              workspaceId, pods.size()));
+              runtimeId.getWorkspaceId(), pods.size()));
     }
 
     return pods.values().iterator().next();

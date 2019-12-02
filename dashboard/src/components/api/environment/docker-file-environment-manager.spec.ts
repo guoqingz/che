@@ -31,7 +31,6 @@ describe('If recipe has content', () => {
           'attributes': {'memoryLimitBytes': '2147483648'},
           'servers': {},
           'volumes': {},
-          'installers': ['org.eclipse.che.ws-agent', 'org.eclipse.che.terminal', 'org.eclipse.che.ssh']
         }
       },
       'recipe': {
@@ -63,7 +62,7 @@ describe('If recipe has content', () => {
       let memoryLimit = envManager.getMemoryLimit(machines[0]);
 
       let expectedMemoryLimit = environment.machines['dev-machine'].attributes.memoryLimitBytes;
-      expect(memoryLimit.toString()).toEqual(expectedMemoryLimit);
+      expect(memoryLimit.toString()).toEqual(expectedMemoryLimit.toString());
     });
 
     it('should return source', () => {
@@ -71,12 +70,6 @@ describe('If recipe has content', () => {
 
       let expectedSource = {image: 'codenvy/ubuntu_jdk8'};
       expect(source).toEqual(expectedSource);
-    });
-
-    it('the machine should be a dev machine', () => {
-      let isDev = envManager.isDev(machines[0]);
-
-      expect(isDev).toBe(true);
     });
 
     it('should update environment\'s recipe via machine\'s source', () => {
@@ -109,7 +102,6 @@ describe('If recipe has location', () => {
         'dev-machine': {
           'servers': {},
           'volumes': {},
-          'installers': ['org.eclipse.che.ws-agent', 'org.eclipse.che.terminal', 'org.eclipse.che.ssh'],
           'attributes': {'memoryLimitBytes': '2147483648'}
         }
       },
@@ -149,12 +141,6 @@ describe('If recipe has location', () => {
       let source = envManager.getSource(machines[0]);
 
       expect(source).toEqual(null);
-    });
-
-    it('the machine should be a dev machine', () => {
-      let isDev = envManager.isDev(machines[0]);
-
-      expect(isDev).toBe(true);
     });
 
   });

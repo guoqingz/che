@@ -15,7 +15,6 @@ import static org.eclipse.che.selenium.core.TestGroup.OPENSHIFT;
 import static org.eclipse.che.selenium.core.TestGroup.UNDER_REPAIR;
 import static org.eclipse.che.selenium.core.constant.TestTimeoutsConstants.LOADER_TIMEOUT_SEC;
 import static org.eclipse.che.selenium.core.constant.TestTimeoutsConstants.UPDATING_PROJECT_TIMEOUT_SEC;
-import static org.eclipse.che.selenium.pageobject.dashboard.NewWorkspace.Stack.CHE_7_PREVIEW;
 import static org.testng.Assert.fail;
 
 import com.google.inject.Inject;
@@ -27,6 +26,7 @@ import org.eclipse.che.selenium.core.webdriver.SeleniumWebDriverHelper;
 import org.eclipse.che.selenium.pageobject.dashboard.CreateWorkspaceHelper;
 import org.eclipse.che.selenium.pageobject.dashboard.Dashboard;
 import org.eclipse.che.selenium.pageobject.dashboard.NewWorkspace;
+import org.eclipse.che.selenium.pageobject.dashboard.NewWorkspace.Devfile;
 import org.eclipse.che.selenium.pageobject.dashboard.workspaces.Workspaces;
 import org.eclipse.che.selenium.pageobject.theia.TheiaEditor;
 import org.eclipse.che.selenium.pageobject.theia.TheiaHostedPluginSelectPathForm;
@@ -42,6 +42,7 @@ import org.testng.annotations.BeforeClass;
 import org.testng.annotations.Test;
 
 @Test(groups = {OPENSHIFT, UNDER_REPAIR})
+/** TODO the test looks outdated */
 public class TheiaBuildPluginTest {
   private static final String WORKSPACE_NAME = NameGenerator.generate("wksp-", 5);
   private static final String EXPECTED_DEVELOPMENT_HOST_TITLE = "Development Host";
@@ -65,7 +66,7 @@ public class TheiaBuildPluginTest {
   @BeforeClass
   public void prepare() {
     dashboard.open();
-    createWorkspaceHelper.createWorkspaceFromStackWithoutProject(CHE_7_PREVIEW, WORKSPACE_NAME);
+    createWorkspaceHelper.createWorkspaceFromDevfileWithoutProject(Devfile.GO, WORKSPACE_NAME);
 
     theiaIde.switchToIdeFrame();
     theiaIde.waitTheiaIde();
@@ -98,7 +99,6 @@ public class TheiaBuildPluginTest {
     // prepare project tree
     theiaProjectTree.waitFilesTab();
     theiaProjectTree.clickOnFilesTab();
-    theiaProjectTree.waitProjectsRootItem();
     theiaIde.waitNotificationDisappearance(
         "Che Workspace: Finished cloning projects.", UPDATING_PROJECT_TIMEOUT_SEC);
 

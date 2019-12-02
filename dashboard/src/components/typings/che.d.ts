@@ -18,6 +18,7 @@ declare namespace che {
   export interface IRootScopeService extends ng.IRootScopeService {
     hideLoader: boolean;
     showIDE: boolean;
+    hideNavbar: boolean;
     wantTokeepLoader: boolean;
     waitingLoaded: boolean;
     currentPage: string;
@@ -294,16 +295,27 @@ declare namespace che {
     status?: string;
     namespace?: string;
     attributes?: IWorkspaceAttributes;
-    config: IWorkspaceConfig;
+    config?: IWorkspaceConfig;
+    devfile?: IWorkspaceDevfile;
     runtime?: IWorkspaceRuntime;
     isLocked?: boolean;
     usedResources?: string;
+  }
+
+  export interface IWorkspaceSettings {
+    supportedRecipeTypes: string;
+    cheWorkspacePluginRegistryUrl: string;
+    cheWorkspaceDevfileRegistryUrl?: string;
+    [propName: string]: string | boolean;
   }
 
   export interface IWorkspaceAttributes {
     created: number;
     updated?: number;
     stackId?: string;
+    stackName?: string;
+    factoryId?: string;
+    factoryurl?: string;
     errorMessage?: string;
     [propName: string]: string | number;
   }
@@ -323,6 +335,17 @@ declare namespace che {
     persistVolumes?: string;
     editor?: string;
     plugins?: string;
+  }
+
+  export interface IWorkspaceDevfile {
+    apiVersion: string;
+    components: Array<any>;
+    projects?: Array <any>;
+    commands?: Array <any>;
+    attributes?: che.IWorkspaceConfigAttributes;
+    metadata: {
+      name: string
+    }
   }
 
   export interface IWorkspaceEnvironment {
@@ -503,6 +526,7 @@ declare namespace che {
     name?: string;
     v: string;
     workspace: IWorkspaceConfig;
+    devfile?: IWorkspaceDevfile;
     creator: any;
     ide?: any;
     button?: any;

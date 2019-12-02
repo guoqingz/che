@@ -36,12 +36,14 @@ export class UserItemController {
     this.$mdDialog = $mdDialog;
   }
 
+  $onInit(): void { }
+
   /**
    * Call user permissions removal. Show the dialog.
    */
   removeUser(): void {
     let content = 'Please confirm removal for the member \'' + this.user.email + '\'.';
-    let promise = this.confirmDialogService.showConfirmDialog('Remove the member', content, 'Delete');
+    let promise = this.confirmDialogService.showConfirmDialog('Remove the member', content, { resolve: 'Delete' });
 
     promise.then(() => {
       // callback is set in scope definition:

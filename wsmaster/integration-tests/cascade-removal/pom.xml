@@ -17,7 +17,7 @@
     <parent>
         <artifactId>integration-tests-parent</artifactId>
         <groupId>org.eclipse.che.core</groupId>
-        <version>7.0.0-beta-4.0-SNAPSHOT</version>
+        <version>7.6.0-SNAPSHOT</version>
     </parent>
     <artifactId>cascade-removal</artifactId>
     <name>Integration Tests :: Cascade Removal</name>
@@ -69,11 +69,6 @@
         </dependency>
         <dependency>
             <groupId>org.eclipse.che.core</groupId>
-            <artifactId>che-core-api-installer</artifactId>
-            <scope>test</scope>
-        </dependency>
-        <dependency>
-            <groupId>org.eclipse.che.core</groupId>
             <artifactId>che-core-api-model</artifactId>
             <scope>test</scope>
         </dependency>
@@ -115,6 +110,11 @@
         <dependency>
             <groupId>org.eclipse.che.core</groupId>
             <artifactId>che-core-commons-lang</artifactId>
+            <scope>test</scope>
+        </dependency>
+        <dependency>
+            <groupId>org.eclipse.che.core</groupId>
+            <artifactId>che-core-commons-observability</artifactId>
             <scope>test</scope>
         </dependency>
         <dependency>

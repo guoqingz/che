@@ -8,18 +8,28 @@
 #
 
 
-apiVersion: extensions/v1beta1
+apiVersion: apps/v1
 kind: Deployment
 metadata:
   creationTimestamp: null
   labels:
+    app: che
+    component: postgres
     io.kompose.service: postgres
   name: postgres
 spec:
   replicas: 1
+  selector:
+    matchLabels:
+      app: che
+      component: postgres
+  strategy:
+    type: Recreate
   template:
     metadata:
       labels:
+        app: che
+        component: postgres
         io.kompose.service: postgres
     spec:
       securityContext:
@@ -78,5 +88,4 @@ spec:
       - name: postgres-data
         persistentVolumeClaim:
           claimName: postgres-data
-  test: false
 status: {}

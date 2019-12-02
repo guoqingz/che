@@ -11,9 +11,8 @@
  */
 'use strict';
 
-import {NamespaceSelectorSvc} from './namespace-selector/namespace-selector.service';
-import {StackSelectorSvc} from './stack-selector/stack-selector.service';
-import {ProjectSourceSelectorService} from './project-source-selector/project-source-selector.service';
+import {NamespaceSelectorSvc} from './ready-to-go-stacks/namespace-selector/namespace-selector.service';
+import {ProjectSourceSelectorService} from './ready-to-go-stacks/project-source-selector/project-source-selector.service';
 import {CheNotification} from '../../../components/notification/che-notification.factory';
 import {ConfirmDialogService} from '../../../components/service/confirm-dialog/confirm-dialog.service';
 import {CheWorkspace} from '../../../components/api/workspace/che-workspace.factory';
@@ -25,7 +24,7 @@ import {CheWorkspace} from '../../../components/api/workspace/che-workspace.fact
  */
 export class CreateWorkspaceSvc {
 
-  static $inject = ['$location', '$log', '$q', 'cheWorkspace', 'namespaceSelectorSvc', 'stackSelectorSvc', 'projectSourceSelectorService', 'cheNotification', 'confirmDialogService', '$document'];
+  static $inject = ['$location', '$log', '$q', 'cheWorkspace', 'namespaceSelectorSvc', 'projectSourceSelectorService', 'cheNotification', 'confirmDialogService', '$document'];
 
   /**
    * Location service.
@@ -52,10 +51,6 @@ export class CreateWorkspaceSvc {
    */
   private projectSourceSelectorService: ProjectSourceSelectorService;
   /**
-   * Stack selector service.
-   */
-  private stackSelectorSvc: StackSelectorSvc;
-  /**
    * The list of workspaces by namespace.
    */
   private workspacesByNamespace: {
@@ -77,13 +72,12 @@ export class CreateWorkspaceSvc {
   /**
    * Default constructor that is using resource injection
    */
-  constructor($location: ng.ILocationService, $log: ng.ILogService, $q: ng.IQService, cheWorkspace: CheWorkspace, namespaceSelectorSvc: NamespaceSelectorSvc, stackSelectorSvc: StackSelectorSvc, projectSourceSelectorService: ProjectSourceSelectorService, cheNotification: CheNotification, confirmDialogService: ConfirmDialogService, $document: ng.IDocumentService) {
+  constructor($location: ng.ILocationService, $log: ng.ILogService, $q: ng.IQService, cheWorkspace: CheWorkspace, namespaceSelectorSvc: NamespaceSelectorSvc, projectSourceSelectorService: ProjectSourceSelectorService, cheNotification: CheNotification, confirmDialogService: ConfirmDialogService, $document: ng.IDocumentService) {
     this.$location = $location;
     this.$log = $log;
     this.$q = $q;
     this.cheWorkspace = cheWorkspace;
     this.namespaceSelectorSvc = namespaceSelectorSvc;
-    this.stackSelectorSvc = stackSelectorSvc;
     this.projectSourceSelectorService = projectSourceSelectorService;
     this.cheNotification = cheNotification;
     this.confirmDialogService = confirmDialogService;
@@ -156,21 +150,31 @@ export class CreateWorkspaceSvc {
     return defer.promise;
   }
 
-  /**
-   * Creates a workspace from config.
-   *
-   * @param {che.IWorkspaceConfig} workspaceConfig the config of workspace which will be created
-   * @param {any} attributes the attributes of the workspace
-   * @returns {ng.IPromise<che.IWorkspace>}
-   */
-  createWorkspace(workspaceConfig: che.IWorkspaceConfig, attributes: any): ng.IPromise<che.IWorkspace> {
+  createWorkspaceFromDevfile(sourceDevfile: che.IWorkspaceDevfile, attributes: any, skipProjectTemplates?: boolean): ng.IPromise<che.IWorkspace> {
     const namespaceId = this.namespaceSelectorSvc.getNamespaceId(),
           projectTemplates = this.projectSourceSelectorService.getProjectTemplates();
 
+    let projects = [];
+    let noProjectsFromDevfile = true;
+    projectTemplates.forEach((template: che.IProjectTemplate) => {
+      sourceDevfile.projects.forEach((project) => {
+        if (project.name === template.name) {
+          noProjectsFromDevfile = false;
+        }
+      });
+
+      projects.push(template);
+    });
+
     return this.checkEditingProgress().then(() => {
-      workspaceConfig.projects = projectTemplates;
-      this.addProjectCommands(workspaceConfig, projectTemplates);
-      return this.cheWorkspace.createWorkspaceFromConfig(namespaceId, workspaceConfig, attributes).then((workspace: che.IWorkspace) => {
+      if (!skipProjectTemplates) {
+        sourceDevfile.projects = projects;
+        // If no projects defined in devfile were added - remove the commands from devfile as well:
+        if (noProjectsFromDevfile) {
+          sourceDevfile.commands = [];
+        }
+      }
+      return this.cheWorkspace.createWorkspaceFromDevfile(namespaceId, sourceDevfile, attributes).then((workspace: che.IWorkspace) => {
         return this.cheWorkspace.fetchWorkspaces().then(() => this.cheWorkspace.getWorkspaceById(workspace.id));
       })
       .then((workspace: che.IWorkspace) => {
@@ -209,7 +213,7 @@ export class CreateWorkspaceSvc {
 
     const title = 'Warning',
           content = `You have project editing, that is not completed. Would you like to proceed to workspace creation without these changes?`;
-    return this.confirmDialogService.showConfirmDialog(title, content, 'Continue');
+    return this.confirmDialogService.showConfirmDialog(title, content, { resolve: 'Continue' });
   }
 
   /**
@@ -218,7 +222,8 @@ export class CreateWorkspaceSvc {
    * @param {che.IWorkspace} workspace the workspace to open in IDE
    */
   redirectToIDE(workspace: che.IWorkspace): void {
-    const path = `/ide/${workspace.namespace}/${workspace.config.name}`;
+    let name = this.cheWorkspace.getWorkspaceDataManager().getName(workspace);
+    const path = `/ide/${workspace.namespace}/${name}`;
     this.$location.path(path);
   }
 
@@ -228,25 +233,49 @@ export class CreateWorkspaceSvc {
    * @param {che.IWorkspace} workspace the workspace to open in IDE
    */
   redirectToDetails(workspace: che.IWorkspace): void {
-    const path = `/workspace/${workspace.namespace}/${workspace.config.name}`;
+    let name = this.cheWorkspace.getWorkspaceDataManager().getName(workspace);
+    const path = `/workspace/${workspace.namespace}/${name}`;
     this.$location.path(path);
   }
 
   /**
-   * Adds commands from the bunch of project templates to provided workspace config.
+   * Adds commands from the bunch of project templates to provided workspace.
    *
-   * @param {che.IWorkspaceConfig} workspaceConfig workspace config
+   * @param {che.IWorkspace} workspace
    * @param {Array<che.IProjectTemplate>} projectTemplates the list of project templates
    */
-  addProjectCommands(workspaceConfig: che.IWorkspaceConfig, projectTemplates: Array<che.IProjectTemplate>): void {
-    workspaceConfig.commands = workspaceConfig.commands || [];
-
+  addProjectCommands(workspace: che.IWorkspace, projectTemplates: Array<che.IProjectTemplate>): void {
     projectTemplates.forEach((template: che.IProjectTemplate) => {
       let projectName = template.name;
       template.commands.forEach((command: any) => {
         command.name = projectName + ':' + command.name;
-        workspaceConfig.commands.push(command);
+        this.cheWorkspace.getWorkspaceDataManager().addCommand(workspace, command);
       });
     });
+  }
+
+  /**
+   * Returns workspaces names for a namespace.
+   *
+   * @param namespace namespace
+   */
+  buildListOfUsedNames(namespace: string): ng.IPromise<string[]> {
+    return this.fetchWorkspacesByNamespace(namespace).then((workspaces: Array<che.IWorkspace>) => {
+      const names = workspaces.filter((workspace: che.IWorkspace) => {
+        return workspace.namespace === namespace;
+      }).map((workspace: che.IWorkspace) => {
+        return this.getWorkspaceName(workspace);
+      });
+      return this.$q.when(names);
+    });
+  }
+
+  /**
+   * Returns name of the pointed workspace.
+   *
+   * @param workspace workspace
+   */
+  getWorkspaceName(workspace: che.IWorkspace): string {
+    return this.cheWorkspace.getWorkspaceDataManager().getName(workspace);
   }
 }

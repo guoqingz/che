@@ -27,6 +27,8 @@ public class MachineResolverBuilder {
   private List<ChePluginEndpoint> containerEndpoints;
   private Map<String, String> wsAttributes;
   private Pair<String, String> projectsRootPathEnvVar;
+  private String pluginPublisher;
+  private String pluginName;
   private String pluginId;
 
   public MachineResolver build() {
@@ -36,11 +38,15 @@ public class MachineResolverBuilder {
         || wsAttributes == null
         || containerEndpoints == null
         || projectsRootPathEnvVar == null
+        || pluginPublisher == null
+        || pluginName == null
         || pluginId == null) {
       throw new IllegalStateException();
     }
 
     return new MachineResolver(
+        pluginPublisher,
+        pluginName,
         pluginId,
         projectsRootPathEnvVar,
         container,
@@ -79,6 +85,16 @@ public class MachineResolverBuilder {
   public MachineResolverBuilder setProjectsRootPathEnvVar(
       Pair<String, String> projectsRootPathEnvVar) {
     this.projectsRootPathEnvVar = projectsRootPathEnvVar;
+    return this;
+  }
+
+  public MachineResolverBuilder setPluginPublisher(String pluginPublisher) {
+    this.pluginPublisher = pluginPublisher;
+    return this;
+  }
+
+  public MachineResolverBuilder setPluginName(String pluginName) {
+    this.pluginName = pluginName;
     return this;
   }
 

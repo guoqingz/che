@@ -20,6 +20,12 @@
   .toolbar-info
     display flex
 
+div.workspace-details-warning-info
+  border none
+  padding-left 20px
+  color inherit
+  background-color $warning-color
+
 .workspace-details-content
   md-tab-content
     padding 0
@@ -68,11 +74,10 @@
     button
       padding-left 40px !important
       text-align right
-      span
-        font-size 12px
-        font-weight bold
-        text-transform none
-        &:before
+      font-size 12px
+      font-weight bold
+      text-transform none
+      &:before
           position absolute
           display inline
           font-size 35px

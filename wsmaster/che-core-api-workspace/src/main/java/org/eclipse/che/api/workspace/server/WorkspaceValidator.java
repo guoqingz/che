@@ -20,7 +20,9 @@ import static org.eclipse.che.api.workspace.server.SidecarToolingWorkspaceUtil.i
 import java.util.Map;
 import java.util.Map.Entry;
 import java.util.Optional;
+import java.util.Set;
 import java.util.regex.Pattern;
+import javax.inject.Inject;
 import javax.inject.Singleton;
 import org.eclipse.che.api.core.ServerException;
 import org.eclipse.che.api.core.ValidationException;
@@ -51,6 +53,13 @@ public class WorkspaceValidator {
       Pattern.compile("[a-zA-Z][a-zA-Z0-9-_.]{0,18}[a-zA-Z0-9]");
   private static final Pattern VOLUME_PATH = Pattern.compile("/.+");
 
+  private final Set<WorkspaceAttributeValidator> attributeValidators;
+
+  @Inject
+  public WorkspaceValidator(Set<WorkspaceAttributeValidator> attributeValidators) {
+    this.attributeValidators = attributeValidators;
+  }
+
   /**
    * Checks whether given workspace configuration object is in application valid state, so it
    * provides enough data to be processed by internal components, and the data it provides is valid
@@ -78,14 +87,13 @@ public class WorkspaceValidator {
           "Workspace %s contains command with null or empty name",
           config.getName());
       check(
-          !isNullOrEmpty(command.getCommandLine()),
-          "Command line required for command '%s' in workspace '%s'",
+          !isNullOrEmpty(command.getCommandLine())
+              || !isNullOrEmpty(
+                  command.getAttributes().get(Command.COMMAND_ACTION_REFERENCE_CONTENT_ATTRIBUTE)),
+          "Command line or content required for command '%s' in workspace '%s'.",
           command.getName(),
           config.getName());
     }
-
-    // projects
-    // TODO
 
     // ensure using either plugins or installers but not both
     validatePlugins(config);
@@ -107,6 +115,27 @@ public class WorkspaceValidator {
               && !attributeName.toLowerCase().startsWith("codenvy"),
           "Attribute name '%s' is not valid",
           attributeName);
+    }
+
+    for (WorkspaceAttributeValidator attributeValidator : attributeValidators) {
+      attributeValidator.validate(attributes);
+    }
+  }
+
+  /**
+   * Checks whether workspace attributes are valid on updating. The attribute is valid if it's key
+   * is not null & not empty & is not prefixed with 'codenvy'.
+   *
+   * @param existing actual attributes
+   * @param update new attributes that are going to be stored instead of existing
+   * @throws ValidationException when attributes are not valid
+   */
+  public void validateUpdateAttributes(Map<String, String> existing, Map<String, String> update)
+      throws ValidationException {
+    validateAttributes(update);
+
+    for (WorkspaceAttributeValidator attributeValidator : attributeValidators) {
+      attributeValidator.validateUpdate(existing, update);
     }
   }
 

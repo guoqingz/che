@@ -12,6 +12,7 @@
 package org.eclipse.che.api.core.model.workspace.config;
 
 import java.util.Map;
+import org.eclipse.che.api.core.model.workspace.devfile.PreviewUrl;
 
 /**
  * Command that can be used to create {@link Process} in a machine
@@ -34,11 +35,27 @@ public interface Command {
   String MACHINE_NAME_ATTRIBUTE = "machineName";
 
   /**
+   * Optional {@link Command} attribute to store full url of the view of the command. This url
+   * should be opened on command run.
+   */
+  String PREVIEW_URL_ATTRIBUTE = "previewUrl";
+
+  /**
    * {@link Command} attribute which indicates in which plugin command must be run. If specified
    * plugin has multiple containers then first containers should be used. Attribute value has the
-   * following format: `{PLUGIN_ID}:{PLUGIN_VERSION}`. For example: org.eclipse.sample-plugin:0.0.1
+   * following format: `{PLUGIN_PUBLISHER}/{PLUGIN_NAME}/{PLUGIN_VERSION}`. For example:
+   * eclipse/sample-plugin/0.0.1
    */
   String PLUGIN_ATTRIBUTE = "plugin";
+
+  /**
+   * An attribute of the command to store the original path to the file that contains the editor
+   * specific configuration.
+   */
+  String COMMAND_ACTION_REFERENCE_ATTRIBUTE = "actionReference";
+
+  /** The contents of editor-specific content. */
+  String COMMAND_ACTION_REFERENCE_CONTENT_ATTRIBUTE = "actionReferenceContent";
 
   /**
    * Returns command name (i.e. 'start tomcat') The name should be unique per user in one workspace,
@@ -55,6 +72,9 @@ public interface Command {
 
   /** Returns command type (i.e. 'maven') */
   String getType();
+
+  /** @return preview url of the command or null if no preview url specified */
+  PreviewUrl getPreviewUrl();
 
   /**
    * Returns attributes related to this command.

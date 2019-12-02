@@ -13,7 +13,6 @@ package org.eclipse.che.workspace.infrastructure.kubernetes;
 
 import static java.lang.String.format;
 import static java.util.Collections.emptyMap;
-import static org.eclipse.che.workspace.infrastructure.kubernetes.util.TracingSpanConstants.BOOTSTRAP_INSTALLERS;
 import static org.eclipse.che.workspace.infrastructure.kubernetes.util.TracingSpanConstants.CHECK_SERVERS;
 import static org.eclipse.che.workspace.infrastructure.kubernetes.util.TracingSpanConstants.WAIT_MACHINES_START;
 import static org.eclipse.che.workspace.infrastructure.kubernetes.util.TracingSpanConstants.WAIT_RUNNING_ASYNC;
@@ -75,7 +74,6 @@ import org.eclipse.che.api.workspace.server.spi.provision.InternalEnvironmentPro
 import org.eclipse.che.commons.annotation.Traced;
 import org.eclipse.che.commons.env.EnvironmentContext;
 import org.eclipse.che.commons.tracing.TracingTags;
-import org.eclipse.che.workspace.infrastructure.kubernetes.bootstrapper.KubernetesBootstrapperFactory;
 import org.eclipse.che.workspace.infrastructure.kubernetes.cache.KubernetesMachineCache;
 import org.eclipse.che.workspace.infrastructure.kubernetes.cache.KubernetesRuntimeStateCache;
 import org.eclipse.che.workspace.infrastructure.kubernetes.environment.KubernetesEnvironment;
@@ -84,7 +82,9 @@ import org.eclipse.che.workspace.infrastructure.kubernetes.model.KubernetesRunti
 import org.eclipse.che.workspace.infrastructure.kubernetes.namespace.KubernetesNamespace;
 import org.eclipse.che.workspace.infrastructure.kubernetes.namespace.event.PodEvent;
 import org.eclipse.che.workspace.infrastructure.kubernetes.namespace.pvc.WorkspaceVolumesStrategy;
+import org.eclipse.che.workspace.infrastructure.kubernetes.provision.PreviewUrlCommandProvisioner;
 import org.eclipse.che.workspace.infrastructure.kubernetes.server.KubernetesServerResolver;
+import org.eclipse.che.workspace.infrastructure.kubernetes.server.external.IngressPathTransformInverter;
 import org.eclipse.che.workspace.infrastructure.kubernetes.util.KubernetesSharedPool;
 import org.eclipse.che.workspace.infrastructure.kubernetes.util.RuntimeEventsPublisher;
 import org.eclipse.che.workspace.infrastructure.kubernetes.util.UnrecoverablePodEventListenerFactory;
@@ -105,7 +105,6 @@ public class KubernetesInternalRuntime<E extends KubernetesEnvironment>
   private final long ingressStartTimeoutMillis;
   private final UnrecoverablePodEventListenerFactory unrecoverableEventListenerFactory;
   private final ServersCheckerFactory serverCheckerFactory;
-  private final KubernetesBootstrapperFactory bootstrapperFactory;
   private final ProbeScheduler probeScheduler;
   private final WorkspaceProbesFactory probesFactory;
   private final KubernetesNamespace namespace;
@@ -118,7 +117,9 @@ public class KubernetesInternalRuntime<E extends KubernetesEnvironment>
   private final Set<InternalEnvironmentProvisioner> internalEnvironmentProvisioners;
   private final KubernetesEnvironmentProvisioner<E> kubernetesEnvironmentProvisioner;
   private final SidecarToolingProvisioner<E> toolingProvisioner;
+  private final IngressPathTransformInverter ingressPathTransformInverter;
   private final RuntimeHangingDetector runtimeHangingDetector;
+  private final PreviewUrlCommandProvisioner previewUrlCommandProvisioner;
   protected final Tracer tracer;
 
   @Inject
@@ -127,7 +128,6 @@ public class KubernetesInternalRuntime<E extends KubernetesEnvironment>
       @Named("che.infra.kubernetes.ingress_start_timeout_min") int ingressStartTimeoutMin,
       NoOpURLRewriter urlRewriter,
       UnrecoverablePodEventListenerFactory unrecoverableEventListenerFactory,
-      KubernetesBootstrapperFactory bootstrapperFactory,
       ServersCheckerFactory serverCheckerFactory,
       WorkspaceVolumesStrategy volumesStrategy,
       ProbeScheduler probeScheduler,
@@ -140,13 +140,14 @@ public class KubernetesInternalRuntime<E extends KubernetesEnvironment>
       Set<InternalEnvironmentProvisioner> internalEnvironmentProvisioners,
       KubernetesEnvironmentProvisioner<E> kubernetesEnvironmentProvisioner,
       SidecarToolingProvisioner<E> toolingProvisioner,
+      IngressPathTransformInverter ingressPathTransformInverter,
       RuntimeHangingDetector runtimeHangingDetector,
+      PreviewUrlCommandProvisioner previewUrlCommandProvisioner,
       Tracer tracer,
       @Assisted KubernetesRuntimeContext<E> context,
       @Assisted KubernetesNamespace namespace) {
     super(context, urlRewriter);
     this.unrecoverableEventListenerFactory = unrecoverableEventListenerFactory;
-    this.bootstrapperFactory = bootstrapperFactory;
     this.serverCheckerFactory = serverCheckerFactory;
     this.volumesStrategy = volumesStrategy;
     this.workspaceStartTimeoutMin = workspaceStartTimeoutMin;
@@ -161,8 +162,10 @@ public class KubernetesInternalRuntime<E extends KubernetesEnvironment>
     this.toolingProvisioner = toolingProvisioner;
     this.kubernetesEnvironmentProvisioner = kubernetesEnvironmentProvisioner;
     this.internalEnvironmentProvisioners = internalEnvironmentProvisioners;
+    this.ingressPathTransformInverter = ingressPathTransformInverter;
     this.runtimeHangingDetector = runtimeHangingDetector;
     this.startSynchronizer = startSynchronizerFactory.create(context.getIdentity());
+    this.previewUrlCommandProvisioner = previewUrlCommandProvisioner;
     this.tracer = tracer;
   }
 
@@ -198,11 +201,16 @@ public class KubernetesInternalRuntime<E extends KubernetesEnvironment>
       LOG.debug("Provisioning of workspace '{}' completed.", workspaceId);
 
       volumesStrategy.prepare(
-          context.getEnvironment(), workspaceId, startSynchronizer.getStartTimeoutMillis());
+          context.getEnvironment(),
+          context.getIdentity(),
+          startSynchronizer.getStartTimeoutMillis());
 
       startSynchronizer.checkFailure();
 
       startMachines();
+
+      previewUrlCommandProvisioner.provision(context.getEnvironment(), namespace);
+      runtimeStates.updateCommands(context.getIdentity(), context.getEnvironment().getCommands());
 
       startSynchronizer.checkFailure();
 
@@ -211,9 +219,9 @@ public class KubernetesInternalRuntime<E extends KubernetesEnvironment>
       final List<CompletableFuture<?>> toCancelFutures = new CopyOnWriteArrayList<>();
       final EnvironmentContext currentContext = EnvironmentContext.getCurrent();
       CompletableFuture<Void> startFailure = startSynchronizer.getStartFailure();
-
-      try (Scope waitRunningAsyncScope = tracer.buildSpan(WAIT_MACHINES_START).startActive(true)) {
-        TracingTags.WORKSPACE_ID.set(waitRunningAsyncScope.span(), workspaceId);
+      Span waitRunningAsyncSpan = tracer.buildSpan(WAIT_MACHINES_START).start();
+      try (Scope waitRunningAsyncScope = tracer.scopeManager().activate(waitRunningAsyncSpan)) {
+        TracingTags.WORKSPACE_ID.set(waitRunningAsyncSpan, workspaceId);
         for (KubernetesMachineImpl machine : machines.getMachines(context.getIdentity()).values()) {
           String machineName = machine.getName();
           final CompletableFuture<Void> machineBootChain =
@@ -224,14 +232,13 @@ public class KubernetesInternalRuntime<E extends KubernetesEnvironment>
                   .thenComposeAsync(checkFailure(startFailure), executor)
                   .thenRun(publishRunningStatus(machineName))
                   .thenCompose(checkFailure(startFailure))
-                  .thenCompose(setContext(currentContext, bootstrap(toCancelFutures, machine)))
-                  // see comments above why executor is explicitly put into arguments
-                  .thenComposeAsync(checkFailure(startFailure), executor)
                   .thenCompose(setContext(currentContext, checkServers(toCancelFutures, machine)))
                   .exceptionally(publishFailedStatus(startFailure, machineName));
           machinesFutures.put(machineName, machineBootChain);
         }
         waitMachines(machinesFutures, toCancelFutures, startFailure);
+      } finally {
+        waitRunningAsyncSpan.finish();
       }
 
       startSynchronizer.complete();
@@ -441,58 +448,6 @@ public class KubernetesInternalRuntime<E extends KubernetesEnvironment>
   }
 
   /**
-   * Returns the function the result of which the completable stage that informs about bootstrapping
-   * of the machine. Note that when the given machine does not contain installers then the result of
-   * this function will be completed stage.
-   */
-  private Function<Void, CompletionStage<Void>> bootstrap(
-      List<CompletableFuture<?>> toCancelFutures, KubernetesMachineImpl machine) {
-
-    // Need to get active span here to allow use in returned function;
-    final Span activeSpan = tracer.activeSpan();
-
-    return ignored -> {
-      // think about to return copy of machines in environment
-      final InternalMachineConfig machineConfig =
-          getContext().getEnvironment().getMachines().get(machine.getName());
-      LOG.debug(
-          "Bootstrapping machine '{}' in workspace '{}'",
-          machine.getName(),
-          getContext().getIdentity().getWorkspaceId());
-      final CompletableFuture<Void> bootstrapperFuture;
-      if (!machineConfig.getInstallers().isEmpty()) {
-        // Span must be created within this lambda block, otherwise the span begins as soon as
-        // this function is called (i.e. before the previous steps in the machine boot chain
-        // are complete
-        Span tracingSpan = tracer.buildSpan(BOOTSTRAP_INSTALLERS).asChildOf(activeSpan).start();
-        TracingTags.WORKSPACE_ID.set(tracingSpan, getContext().getIdentity().getWorkspaceId());
-        TracingTags.MACHINE_NAME.set(tracingSpan, machine.getName());
-
-        bootstrapperFuture =
-            bootstrapperFactory
-                .create(
-                    getContext().getIdentity(),
-                    machineConfig.getInstallers(),
-                    machine,
-                    namespace,
-                    startSynchronizer)
-                .bootstrapAsync();
-        bootstrapperFuture.whenComplete(
-            (res, ex) -> {
-              if (ex != null) {
-                TracingTags.setErrorStatus(tracingSpan, ex);
-              }
-              tracingSpan.finish();
-            });
-        toCancelFutures.add(bootstrapperFuture);
-      } else {
-        bootstrapperFuture = CompletableFuture.completedFuture(null);
-      }
-      return bootstrapperFuture;
-    };
-  }
-
-  /**
    * Note that if this invocation caused a transition of failure to a completed state then
    * notification about machine start failed will be published.
    */
@@ -645,7 +600,7 @@ public class KubernetesInternalRuntime<E extends KubernetesEnvironment>
     listenEvents();
 
     final KubernetesServerResolver serverResolver =
-        new KubernetesServerResolver(createdServices, readyIngresses);
+        new KubernetesServerResolver(ingressPathTransformInverter, createdServices, readyIngresses);
 
     doStartMachine(serverResolver);
   }
@@ -778,7 +733,6 @@ public class KubernetesInternalRuntime<E extends KubernetesEnvironment>
     if (!runtimeStates.putIfAbsent(
         new KubernetesRuntimeState(
             getContext().getIdentity(),
-            namespace.getName(),
             WorkspaceStatus.STARTING,
             getContext().getEnvironment().getCommands()))) {
       throw new StateException("Runtime is already started");

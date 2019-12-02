@@ -55,7 +55,9 @@ export class ListServersController {
     this.$mdDialog = $mdDialog;
     this.lodash = lodash;
     this.confirmDialogService = confirmDialogService;
+  }
 
+  $onInit(): void {
     this.buildServersList();
   }
 
@@ -211,7 +213,7 @@ export class ListServersController {
       content += 'this selected server?';
     }
 
-    return this.confirmDialogService.showConfirmDialog('Remove servers', content, 'Delete');
+    return this.confirmDialogService.showConfirmDialog('Remove servers', content, { resolve: 'Delete' });
   }
 
 }

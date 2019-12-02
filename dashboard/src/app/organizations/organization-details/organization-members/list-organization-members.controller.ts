@@ -64,6 +64,10 @@ export class ListOrganizationMembersController {
    */
   private confirmDialogService: ConfirmDialogService;
   /**
+   * Resources service.
+   */
+  private resourcesService: che.service.IResourcesService;
+  /**
    * Promises service.
    */
   private $q: ng.IQService;
@@ -134,9 +138,8 @@ export class ListOrganizationMembersController {
     this.cheNotification = cheNotification;
     this.confirmDialogService = confirmDialogService;
     this.organizationsPermissionService = organizationsPermissionService;
-    this.organizationActions = resourcesService.getOrganizationActions();
-    this.organizationRoles = resourcesService.getOrganizationRoles();
     this.$log = $log;
+    this.resourcesService = resourcesService;
 
     this.members = [];
 
@@ -146,6 +149,11 @@ export class ListOrganizationMembersController {
     $scope.$on('$destroy', () => {
       cheListHelperFactory.removeHelper(helperId);
     });
+  }
+
+  $onInit(): void {
+    this.organizationActions = this.resourcesService.getOrganizationActions();
+    this.organizationRoles = this.resourcesService.getOrganizationRoles();
 
     this.formMemberList();
   }
@@ -396,7 +404,7 @@ export class ListOrganizationMembersController {
    * @param member
    */
   removeMember(member: che.IMember): void {
-    let promise = this.confirmDialogService.showConfirmDialog('Remove member', 'Would you like to remove member  ' + member.email + ' ?', 'Delete');
+    let promise = this.confirmDialogService.showConfirmDialog('Remove member', 'Would you like to remove member  ' + member.email + ' ?', { resolve: 'Delete' });
 
     promise.then(() => {
       this.removePermissions(member);
@@ -499,6 +507,6 @@ export class ListOrganizationMembersController {
       confirmTitle += 'the selected member?';
     }
 
-    return this.confirmDialogService.showConfirmDialog('Remove members', confirmTitle, 'Delete');
+    return this.confirmDialogService.showConfirmDialog('Remove members', confirmTitle, { resolve: 'Delete' });
   }
 }

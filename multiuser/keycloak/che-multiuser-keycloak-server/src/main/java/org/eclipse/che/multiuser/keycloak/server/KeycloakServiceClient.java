@@ -17,8 +17,8 @@ import static org.eclipse.che.multiuser.keycloak.shared.KeycloakConstants.REALM_
 import com.google.common.io.CharStreams;
 import com.google.gson.Gson;
 import com.google.gson.JsonSyntaxException;
-import io.jsonwebtoken.Jwt;
-import io.jsonwebtoken.impl.DefaultClaims;
+import io.jsonwebtoken.Claims;
+import io.jsonwebtoken.JwtParser;
 import java.io.IOException;
 import java.io.InputStream;
 import java.io.InputStreamReader;
@@ -67,10 +67,12 @@ public class KeycloakServiceClient {
       Pattern.compile("User (.+) is not associated with identity provider (.+)");
 
   private static final Gson gson = new Gson();
+  private JwtParser jwtParser;
 
   @Inject
-  public KeycloakServiceClient(KeycloakSettings keycloakSettings) {
+  public KeycloakServiceClient(KeycloakSettings keycloakSettings, JwtParser jwtParser) {
     this.keycloakSettings = keycloakSettings;
+    this.jwtParser = jwtParser;
   }
 
   /**
@@ -82,11 +84,10 @@ public class KeycloakServiceClient {
    * @return URL to redirect client to perform account linking
    */
   public String getAccountLinkingURL(
-      @SuppressWarnings("rawtypes") Jwt token, String oauthProvider, String redirectAfterLogin) {
+      String token, String oauthProvider, String redirectAfterLogin) {
 
-    DefaultClaims claims = (DefaultClaims) token.getBody();
-    final String clientId = claims.getAudience();
-
+    Claims claims = jwtParser.parseClaimsJws(token).getBody();
+    final String clientId = claims.get("azp", String.class);
     final String sessionState = claims.get("session_state", String.class);
     MessageDigest md;
     try {
@@ -138,7 +139,7 @@ public class KeycloakServiceClient {
     } catch (BadRequestException e) {
       if (assotiateUserPattern.matcher(e.getMessage()).matches()) {
         // If user has no link with identity provider yet,
-        // we should threat this as unauthorized and send to oAuth login page.
+        // we should threat this as unauthorized and send to OAuth login page.
         throw new UnauthorizedException(e.getMessage());
       }
       throw e;

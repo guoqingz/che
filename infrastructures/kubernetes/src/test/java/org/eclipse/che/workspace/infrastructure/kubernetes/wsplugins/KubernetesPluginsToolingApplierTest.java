@@ -27,9 +27,10 @@ import static org.eclipse.che.commons.lang.NameGenerator.generate;
 import static org.eclipse.che.workspace.infrastructure.kubernetes.Constants.CHE_ORIGINAL_NAME_LABEL;
 import static org.eclipse.che.workspace.infrastructure.kubernetes.server.secure.SecureServerExposerFactoryProvider.SECURE_EXPOSER_IMPL_PROPERTY;
 import static org.mockito.ArgumentMatchers.any;
+import static org.mockito.ArgumentMatchers.eq;
 import static org.mockito.Mockito.lenient;
-import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.spy;
+import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
 import static org.testng.Assert.assertEquals;
 import static org.testng.Assert.assertNull;
@@ -53,13 +54,13 @@ import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.Map.Entry;
+import java.util.regex.Pattern;
 import java.util.stream.Collectors;
 import org.eclipse.che.api.core.model.workspace.Warning;
 import org.eclipse.che.api.core.model.workspace.config.ServerConfig;
 import org.eclipse.che.api.core.model.workspace.runtime.RuntimeIdentity;
 import org.eclipse.che.api.workspace.server.model.impl.CommandImpl;
 import org.eclipse.che.api.workspace.server.model.impl.ServerConfigImpl;
-import org.eclipse.che.api.workspace.server.model.impl.VolumeImpl;
 import org.eclipse.che.api.workspace.server.spi.InfrastructureException;
 import org.eclipse.che.api.workspace.server.spi.environment.InternalEnvironment;
 import org.eclipse.che.api.workspace.server.spi.environment.InternalMachineConfig;
@@ -84,7 +85,8 @@ import org.testng.annotations.Test;
 /** @author Alexander Garagatyi */
 @Listeners(MockitoTestNGListener.class)
 public class KubernetesPluginsToolingApplierTest {
-  private static final String TEST_IMAGE = "testImage/test:test";
+
+  private static final String TEST_IMAGE = "testImage/test/test";
   private static final String TEST_IMAGE_POLICY = "IfNotPresent";
   private static final String ENV_VAR = "PLUGINS_ENV_VAR";
   private static final String ENV_VAR_VALUE = "PLUGINS_ENV_VAR_VALUE";
@@ -102,9 +104,9 @@ public class KubernetesPluginsToolingApplierTest {
   @Mock private InternalMachineConfig userMachineConfig;
   @Mock private RuntimeIdentity runtimeIdentity;
   @Mock private ProjectsRootEnvVariableProvider projectsRootEnvVariableProvider;
+  @Mock private ChePluginsVolumeApplier chePluginsVolumeApplier;
 
   private KubernetesEnvironment internalEnvironment;
-  private List<Container> containers;
   private KubernetesPluginsToolingApplier applier;
 
   @BeforeMethod
@@ -112,10 +114,14 @@ public class KubernetesPluginsToolingApplierTest {
     internalEnvironment = spy(KubernetesEnvironment.builder().build());
     applier =
         new KubernetesPluginsToolingApplier(
-            TEST_IMAGE_POLICY, MEMORY_LIMIT_MB, false, projectsRootEnvVariableProvider);
+            TEST_IMAGE_POLICY,
+            MEMORY_LIMIT_MB,
+            false,
+            projectsRootEnvVariableProvider,
+            chePluginsVolumeApplier);
 
     Map<String, InternalMachineConfig> machines = new HashMap<>();
-    containers = new ArrayList<>();
+    List<Container> containers = new ArrayList<>();
     containers.add(userContainer);
     machines.put(USER_MACHINE_NAME, userMachineConfig);
 
@@ -126,7 +132,8 @@ public class KubernetesPluginsToolingApplierTest {
     internalEnvironment.addPod(pod);
     internalEnvironment.getMachines().putAll(machines);
 
-    when(projectsRootEnvVariableProvider.get(any()))
+    lenient()
+        .when(projectsRootEnvVariableProvider.get(any()))
         .thenReturn(new Pair<>("projects_root", "/somewhere/over/the/rainbow"));
   }
 
@@ -143,28 +150,25 @@ public class KubernetesPluginsToolingApplierTest {
     applier.apply(
         runtimeIdentity,
         internalEnvironment,
-        singletonList(createChePlugin("plugin", createContainer("container", pluginCommand))));
+        singletonList(createChePlugin(createContainer("container", pluginCommand))));
 
     // then
     List<CommandImpl> envCommands = internalEnvironment.getCommands();
     assertEquals(envCommands.size(), 1);
     CommandImpl envCommand = envCommands.get(0);
     assertEquals(envCommand.getName(), pluginCommand.getName());
-    assertEquals(
-        envCommand.getCommandLine(),
-        pluginCommand.getCommand().stream().collect(Collectors.joining(" ")));
+    assertEquals(envCommand.getCommandLine(), String.join(" ", pluginCommand.getCommand()));
     assertEquals(envCommand.getType(), "custom");
     assertEquals(
         envCommand.getAttributes().get(WORKING_DIRECTORY_ATTRIBUTE), pluginCommand.getWorkingDir());
-    assertEquals(
-        envCommand.getAttributes().get(MACHINE_NAME_ATTRIBUTE), POD_NAME + "/plugin-container");
+    validateContainerNameName(envCommand.getAttributes().get(MACHINE_NAME_ATTRIBUTE), "container");
   }
 
   @Test
   public void shouldResolveMachineNameForCommandsInEnvironment() throws Exception {
     // given
-    ChePlugin chePlugin = createChePlugin("plugin", createContainer("container"));
-    String pluginRef = chePlugin.getId() + ":" + chePlugin.getVersion();
+    ChePlugin chePlugin = createChePlugin(createContainer("container"));
+    String pluginRef = chePlugin.getId();
 
     CommandImpl pluginCommand = new CommandImpl("test-command", "echo Hello World!", "custom");
     pluginCommand.getAttributes().put("plugin", pluginRef);
@@ -181,16 +185,15 @@ public class KubernetesPluginsToolingApplierTest {
     assertEquals(envCommand.getType(), pluginCommand.getType());
     assertEquals(envCommand.getCommandLine(), pluginCommand.getCommandLine());
     assertEquals(envCommand.getAttributes().get("plugin"), pluginRef);
-    assertEquals(
-        envCommand.getAttributes().get(MACHINE_NAME_ATTRIBUTE), POD_NAME + "/plugin-container");
+    validateContainerNameName(envCommand.getAttributes().get(MACHINE_NAME_ATTRIBUTE), "container");
   }
 
   @Test
   public void shouldFillInWarningIfChePluginDoesNotHaveAnyContainersButThereAreRelatedCommands()
       throws Exception {
     // given
-    ChePlugin chePlugin = createChePlugin("plugin");
-    String pluginRef = chePlugin.getId() + ":" + chePlugin.getVersion();
+    ChePlugin chePlugin = createChePlugin("custom-name");
+    String pluginRef = chePlugin.getId();
 
     CommandImpl pluginCommand = new CommandImpl("test-command", "echo Hello World!", "custom");
     pluginCommand.getAttributes().put("plugin", pluginRef);
@@ -208,7 +211,7 @@ public class KubernetesPluginsToolingApplierTest {
         Warnings.COMMAND_IS_CONFIGURED_IN_PLUGIN_WITHOUT_CONTAINERS_WARNING_CODE);
     assertEquals(
         warning.getMessage(),
-        "There are configured commands for plugin 'some-id:0.0.3' that doesn't have any containers");
+        "There are configured commands for plugin 'somePublisher/custom-name/0.0.3' that doesn't have any containers");
   }
 
   @Test
@@ -216,7 +219,7 @@ public class KubernetesPluginsToolingApplierTest {
       shouldNotFillInWarningIfChePluginDoesNotHaveAnyContainersAndThereAreNotRelatedCommands()
           throws Exception {
     // given
-    ChePlugin chePlugin = createChePlugin("plugin");
+    ChePlugin chePlugin = createChePlugin();
 
     // when
     applier.apply(runtimeIdentity, internalEnvironment, singletonList(chePlugin));
@@ -229,8 +232,8 @@ public class KubernetesPluginsToolingApplierTest {
   public void shouldFillInWarningIfChePluginHasMultiplyContainersButThereAreRelatedCommands()
       throws Exception {
     // given
-    ChePlugin chePlugin = createChePlugin("plugin", createContainer(), createContainer());
-    String pluginRef = chePlugin.getId() + ":" + chePlugin.getVersion();
+    ChePlugin chePlugin = createChePlugin(createContainer(), createContainer());
+    String pluginRef = chePlugin.getId();
 
     CommandImpl pluginCommand = new CommandImpl("test-command", "echo Hello World!", "custom");
     pluginCommand.getAttributes().put("plugin", pluginRef);
@@ -248,20 +251,38 @@ public class KubernetesPluginsToolingApplierTest {
         Warnings.COMMAND_IS_CONFIGURED_IN_PLUGIN_WITH_MULTIPLY_CONTAINERS_WARNING_CODE);
     assertEquals(
         warning.getMessage(),
-        "There are configured commands for plugin 'some-id:0.0.3' that has multiply containers. Commands will be configured to be run in first container");
+        "There are configured commands for plugin '"
+            + pluginRef
+            + "' that has multiply containers. Commands will be configured to be run in first container");
   }
 
   @Test
   public void shouldNotFillInWarningIfChePluginHasMultiplyContainersAndThereAreNotRelatedCommands()
       throws Exception {
     // given
-    ChePlugin chePlugin = createChePlugin("plugin", createContainer(), createContainer());
+    ChePlugin chePlugin = createChePlugin(createContainer(), createContainer());
 
     // when
     applier.apply(runtimeIdentity, internalEnvironment, singletonList(chePlugin));
 
     // then
     assertTrue(internalEnvironment.getWarnings().isEmpty());
+  }
+
+  @Test
+  public void shouldUseContainerNameForMachinesName() throws Exception {
+    // given
+    internalEnvironment.getMachines().clear();
+
+    ChePlugin chePlugin = createChePlugin("plugin1", createContainer("container1"));
+
+    // when
+    applier.apply(runtimeIdentity, internalEnvironment, singletonList(chePlugin));
+
+    // then
+    Map<String, InternalMachineConfig> machines = internalEnvironment.getMachines();
+    assertEquals(machines.size(), 1);
+    validateContainerNameName(machines.keySet().iterator().next(), "container1");
   }
 
   @Test(
@@ -282,6 +303,119 @@ public class KubernetesPluginsToolingApplierTest {
     verifyPodAndContainersNumber(2);
     Container toolingContainer = getOneAndOnlyNonUserContainer(internalEnvironment);
     verifyContainer(toolingContainer);
+  }
+
+  @Test
+  public void addToolingInitContainerToAPod() throws Exception {
+    lenient().when(podSpec.getInitContainers()).thenReturn(new ArrayList<>());
+    ChePlugin chePlugin = createChePlugin();
+    chePlugin.setInitContainers(singletonList(createContainer()));
+
+    applier.apply(runtimeIdentity, internalEnvironment, singletonList(chePlugin));
+
+    verifyPodAndInitContainersNumber(1);
+    Container toolingInitContainer = getOnlyOneInitContainerFromPod(internalEnvironment);
+    verifyContainer(toolingInitContainer);
+  }
+
+  @Test
+  public void addToolingInitContainerWithCommand() throws InfrastructureException {
+    List<String> command = Arrays.asList("cp", "-rf", "test-file", "/some-volume/test");
+    lenient().when(podSpec.getInitContainers()).thenReturn(new ArrayList<>());
+    ChePlugin chePlugin = createChePlugin();
+    List<CheContainer> initContainers = singletonList(createContainer(command, null));
+    chePlugin.setInitContainers(initContainers);
+
+    applier.apply(runtimeIdentity, internalEnvironment, singletonList(chePlugin));
+
+    verifyPodAndInitContainersNumber(1);
+    Container toolingInitContainer = getOnlyOneInitContainerFromPod(internalEnvironment);
+    verifyContainer(toolingInitContainer);
+    assertEquals(toolingInitContainer.getCommand(), command);
+  }
+
+  @Test
+  public void addToolingInitContainerWithArgs() throws InfrastructureException {
+    List<String> args = Arrays.asList("cp", "-rf", "test-file", "/some-volume/test");
+    lenient().when(podSpec.getInitContainers()).thenReturn(new ArrayList<>());
+    ChePlugin chePlugin = createChePlugin();
+    List<CheContainer> initContainers = singletonList(createContainer(null, args));
+    chePlugin.setInitContainers(initContainers);
+
+    applier.apply(runtimeIdentity, internalEnvironment, singletonList(chePlugin));
+
+    verifyPodAndInitContainersNumber(1);
+    Container toolingInitContainer = getOnlyOneInitContainerFromPod(internalEnvironment);
+    verifyContainer(toolingInitContainer);
+    assertEquals(toolingInitContainer.getArgs(), args);
+  }
+
+  @Test
+  public void addToolingInitContainerWithCommandAndArgs() throws InfrastructureException {
+    List<String> command = singletonList("cp");
+    List<String> args = Arrays.asList("-rf", "test-file", "/some-volume/test");
+    lenient().when(podSpec.getInitContainers()).thenReturn(new ArrayList<>());
+    ChePlugin chePlugin = createChePlugin();
+    List<CheContainer> initContainers = singletonList(createContainer(command, args));
+    chePlugin.setInitContainers(initContainers);
+
+    applier.apply(runtimeIdentity, internalEnvironment, singletonList(chePlugin));
+
+    verifyPodAndInitContainersNumber(1);
+    Container toolingInitContainer = getOnlyOneInitContainerFromPod(internalEnvironment);
+    verifyContainer(toolingInitContainer);
+    assertEquals(toolingInitContainer.getCommand(), command);
+    assertEquals(toolingInitContainer.getArgs(), args);
+  }
+
+  @Test
+  public void addToolingContainerWithCommand() throws InfrastructureException {
+    List<String> command = Arrays.asList("tail", "-f", "/dev/null");
+    lenient().when(podSpec.getContainers()).thenReturn(new ArrayList<>());
+    ChePlugin chePlugin = createChePlugin();
+    List<CheContainer> containers = singletonList(createContainer(command, null));
+    chePlugin.setContainers(containers);
+
+    applier.apply(runtimeIdentity, internalEnvironment, singletonList(chePlugin));
+
+    verifyPodAndContainersNumber(1);
+    Container toolingContainer = getOneAndOnlyNonUserContainer(internalEnvironment);
+    verifyContainer(toolingContainer);
+    assertEquals(toolingContainer.getCommand(), command);
+  }
+
+  @Test
+  public void addToolingContainerWithArgs() throws InfrastructureException {
+    List<String> args = Arrays.asList("tail", "-f", "/dev/null");
+    lenient().when(podSpec.getContainers()).thenReturn(new ArrayList<>());
+    ChePlugin chePlugin = createChePlugin();
+    List<CheContainer> containers = singletonList(createContainer(null, args));
+    chePlugin.setContainers(containers);
+
+    applier.apply(runtimeIdentity, internalEnvironment, singletonList(chePlugin));
+
+    verifyPodAndContainersNumber(1);
+    Container toolingContainer = getOneAndOnlyNonUserContainer(internalEnvironment);
+    verifyContainer(toolingContainer);
+    assertEquals(toolingContainer.getArgs(), args);
+  }
+
+  @Test
+  public void addToolingContainerWithCommandAndArgs() throws InfrastructureException {
+    List<String> command = singletonList("tail");
+    List<String> args = Arrays.asList("-f", "/dev/null");
+    lenient().when(podSpec.getContainers()).thenReturn(new ArrayList<>());
+    ChePlugin chePlugin = createChePlugin();
+    List<CheContainer> containers = singletonList(createContainer(command, args));
+    chePlugin.setContainers(containers);
+
+    applier.apply(runtimeIdentity, internalEnvironment, singletonList(chePlugin));
+
+    verifyPodAndContainersNumber(1);
+    Container toolingContainer = getOneAndOnlyNonUserContainer(internalEnvironment);
+    verifyContainer(toolingContainer);
+    assertEquals(toolingContainer.getCommand(), command);
+    assertEquals(toolingContainer.getArgs(), args);
   }
 
   @Test
@@ -323,11 +457,46 @@ public class KubernetesPluginsToolingApplierTest {
   }
 
   @Test
-  public void addsMachineWithVolumeToAToolingContainer() throws Exception {
-    applier.apply(runtimeIdentity, internalEnvironment, singletonList(createChePlugin()));
+  public void applyPluginContainerWithOneVolume() throws InfrastructureException {
+    lenient().when(podSpec.getContainers()).thenReturn(new ArrayList<>());
 
-    InternalMachineConfig machineConfig = getOneAndOnlyNonUserMachine(internalEnvironment);
-    verifyOneAndOnlyVolume(machineConfig, VOLUME_NAME, VOLUME_MOUNT_PATH);
+    ChePlugin chePlugin = createChePlugin();
+    CheContainer cheContainer = chePlugin.getContainers().get(0);
+
+    applier.apply(runtimeIdentity, internalEnvironment, singletonList(chePlugin));
+
+    verifyPodAndContainersNumber(1);
+    Container container = getOneAndOnlyNonUserContainer(internalEnvironment);
+    verifyContainer(container);
+
+    verify(chePluginsVolumeApplier)
+        .applyVolumes(
+            any(PodData.class),
+            eq(container),
+            eq(cheContainer.getVolumes()),
+            eq(internalEnvironment));
+  }
+
+  @Test
+  public void applyPluginInitContainerWithOneVolume() throws InfrastructureException {
+    lenient().when(podSpec.getInitContainers()).thenReturn(new ArrayList<>());
+
+    ChePlugin chePlugin = createChePlugin();
+    CheContainer initContainer = createContainer();
+    chePlugin.setInitContainers(singletonList(initContainer));
+
+    applier.apply(runtimeIdentity, internalEnvironment, singletonList(chePlugin));
+
+    verifyPodAndInitContainersNumber(1);
+    Container toolingInitContainer = getOnlyOneInitContainerFromPod(internalEnvironment);
+    verifyContainer(toolingInitContainer);
+
+    verify(chePluginsVolumeApplier)
+        .applyVolumes(
+            any(PodData.class),
+            eq(toolingInitContainer),
+            eq(initContainer.getVolumes()),
+            eq(internalEnvironment));
   }
 
   @Test
@@ -336,24 +505,27 @@ public class KubernetesPluginsToolingApplierTest {
     ChePlugin chePluginWithNonDefaultVolume = createChePlugin();
     String anotherVolumeName = VOLUME_NAME + "1";
     String anotherVolumeMountPath = VOLUME_MOUNT_PATH + "/something";
-    chePluginWithNonDefaultVolume
-        .getContainers()
-        .get(0)
-        .setVolumes(
-            singletonList(new Volume().name(anotherVolumeName).mountPath(anotherVolumeMountPath)));
+    List<Volume> volumes =
+        singletonList(new Volume().name(anotherVolumeName).mountPath(anotherVolumeMountPath));
+    CheContainer toolingContainer = chePluginWithNonDefaultVolume.getContainers().get(0);
+    toolingContainer.setVolumes(volumes);
+
+    ChePlugin chePlugin = createChePlugin();
 
     // when
     applier.apply(
-        runtimeIdentity,
-        internalEnvironment,
-        asList(createChePlugin(), chePluginWithNonDefaultVolume));
+        runtimeIdentity, internalEnvironment, asList(chePlugin, chePluginWithNonDefaultVolume));
 
     // then
     Collection<InternalMachineConfig> machineConfigs = getNonUserMachines(internalEnvironment);
     assertEquals(machineConfigs.size(), 2);
-    verifyNumberOfMachinesWithSpecificVolume(machineConfigs, 1, VOLUME_NAME, VOLUME_MOUNT_PATH);
-    verifyNumberOfMachinesWithSpecificVolume(
-        machineConfigs, 1, anotherVolumeName, anotherVolumeMountPath);
+
+    verify(chePluginsVolumeApplier)
+        .applyVolumes(
+            any(PodData.class),
+            any(Container.class),
+            eq(chePlugin.getContainers().get(0).getVolumes()),
+            eq(internalEnvironment));
   }
 
   @Test
@@ -369,8 +541,7 @@ public class KubernetesPluginsToolingApplierTest {
     // then
     Collection<InternalMachineConfig> machineConfigs = getNonUserMachines(internalEnvironment);
     assertEquals(machineConfigs.size(), 2);
-    verifyNumberOfMachinesWithSpecificNumberOfVolumes(machineConfigs, 1, 0);
-    verifyNumberOfMachinesWithSpecificNumberOfVolumes(machineConfigs, 1, 1);
+    verifyNumberOfMachinesWithSpecificNumberOfVolumes(machineConfigs, 2, 0);
   }
 
   @Test
@@ -527,31 +698,6 @@ public class KubernetesPluginsToolingApplierTest {
     verifyK8sServices(internalEnvironment, endpoint1, endpoint2);
   }
 
-  @Test
-  public void shouldPopulateWorkspaceWideEnvVarsToAllTheContainers() throws Exception {
-    // when
-    Container container = mock(Container.class);
-    containers.add(container);
-    List<io.fabric8.kubernetes.api.model.EnvVar> workspaceWideEnvVars = new ArrayList<>();
-    //    workspaceWideEnvVars.add();
-    //    workspaceWideEnvVars.add();
-
-    // when
-    applier.apply(
-        runtimeIdentity,
-        internalEnvironment,
-        ImmutableList.of(createChePlugin(), createChePlugin(createContainer(), createContainer())));
-
-    // then
-    assertEquals(internalEnvironment.getPodsCopy().size(), 1);
-    Pod pod = internalEnvironment.getPodsCopy().values().iterator().next();
-    List<Container> actualContainers = pod.getSpec().getContainers();
-    assertEquals(actualContainers.size(), 5);
-    for (Container actualContainer : actualContainers) {
-      assertTrue(actualContainer.getEnv().containsAll(workspaceWideEnvVars));
-    }
-  }
-
   @Test(
       expectedExceptions = InfrastructureException.class,
       expectedExceptionsMessageRegExp =
@@ -578,7 +724,11 @@ public class KubernetesPluginsToolingApplierTest {
   public void shouldSetJWTServerExposerAttributeIfAuthEnabled() throws Exception {
     applier =
         new KubernetesPluginsToolingApplier(
-            TEST_IMAGE_POLICY, MEMORY_LIMIT_MB, true, projectsRootEnvVariableProvider);
+            TEST_IMAGE_POLICY,
+            MEMORY_LIMIT_MB,
+            true,
+            projectsRootEnvVariableProvider,
+            chePluginsVolumeApplier);
 
     applier.apply(runtimeIdentity, internalEnvironment, singletonList(createChePlugin()));
 
@@ -590,7 +740,11 @@ public class KubernetesPluginsToolingApplierTest {
       throws Exception {
     applier =
         new KubernetesPluginsToolingApplier(
-            TEST_IMAGE_POLICY, MEMORY_LIMIT_MB, true, projectsRootEnvVariableProvider);
+            TEST_IMAGE_POLICY,
+            MEMORY_LIMIT_MB,
+            true,
+            projectsRootEnvVariableProvider,
+            chePluginsVolumeApplier);
     internalEnvironment.getAttributes().put(SECURE_EXPOSER_IMPL_PROPERTY, "somethingElse");
 
     applier.apply(runtimeIdentity, internalEnvironment, singletonList(createChePlugin()));
@@ -603,7 +757,11 @@ public class KubernetesPluginsToolingApplierTest {
   public void shouldSetSpecifiedImagePullPolicy() throws Exception {
     applier =
         new KubernetesPluginsToolingApplier(
-            TEST_IMAGE_POLICY, MEMORY_LIMIT_MB, true, projectsRootEnvVariableProvider);
+            TEST_IMAGE_POLICY,
+            MEMORY_LIMIT_MB,
+            true,
+            projectsRootEnvVariableProvider,
+            chePluginsVolumeApplier);
 
     applier.apply(runtimeIdentity, internalEnvironment, singletonList(createChePlugin()));
 
@@ -624,7 +782,11 @@ public class KubernetesPluginsToolingApplierTest {
   public void shouldSetNullImagePullPolicyIfValueIsNotStandard() throws Exception {
     applier =
         new KubernetesPluginsToolingApplier(
-            "None", MEMORY_LIMIT_MB, true, projectsRootEnvVariableProvider);
+            "None",
+            MEMORY_LIMIT_MB,
+            true,
+            projectsRootEnvVariableProvider,
+            chePluginsVolumeApplier);
 
     applier.apply(runtimeIdentity, internalEnvironment, singletonList(createChePlugin()));
 
@@ -656,12 +818,23 @@ public class KubernetesPluginsToolingApplierTest {
   }
 
   private ChePlugin createChePlugin(String name, CheContainer... containers) {
+    String version = "0.0.3";
+    String publisher = "somePublisher";
     ChePlugin plugin = new ChePlugin();
     plugin.setName(name);
-    plugin.setId("some-id");
-    plugin.setVersion("0.0.3");
+    plugin.setPublisher(publisher);
+    plugin.setId(publisher + "/" + name + "/" + version);
+    plugin.setVersion(version);
     plugin.setContainers(Arrays.asList(containers));
     return plugin;
+  }
+
+  private CheContainer createContainer(List<String> command, List<String> args) {
+    CheContainer container = createContainer();
+    container.setCommand(command);
+    container.setArgs(args);
+
+    return container;
   }
 
   private CheContainer createContainer(Command... commands) {
@@ -693,6 +866,12 @@ public class KubernetesPluginsToolingApplierTest {
     assertEquals(pod.getSpec().getContainers().size(), containersNumber);
   }
 
+  private void verifyPodAndInitContainersNumber(int containersNumber) {
+    assertEquals(internalEnvironment.getPodsCopy().size(), 1);
+    Pod pod = internalEnvironment.getPodsCopy().values().iterator().next();
+    assertEquals(pod.getSpec().getInitContainers().size(), containersNumber);
+  }
+
   private void verifyContainer(Container toolingContainer) {
     assertEquals(toolingContainer.getImage(), TEST_IMAGE);
     assertEquals(
@@ -707,15 +886,6 @@ public class KubernetesPluginsToolingApplierTest {
   }
 
   @SuppressWarnings("SameParameterValue")
-  private void verifyOneAndOnlyVolume(
-      InternalMachineConfig machineConfig, String volumeName, String volumeMountPath) {
-    Map<String, org.eclipse.che.api.core.model.workspace.config.Volume> volumes =
-        machineConfig.getVolumes();
-    assertEquals(volumes.size(), 1);
-    assertEquals(ImmutableMap.of(volumeName, new VolumeImpl().withPath(volumeMountPath)), volumes);
-  }
-
-  @SuppressWarnings("SameParameterValue")
   private void verifyNumberOfMachinesWithSpecificNumberOfVolumes(
       Collection<InternalMachineConfig> machineConfigs, int numberOfMachines, int numberOfVolumes) {
 
@@ -723,25 +893,6 @@ public class KubernetesPluginsToolingApplierTest {
         machineConfigs
             .stream()
             .filter(machineConfig -> machineConfig.getVolumes().size() == numberOfVolumes)
-            .count();
-    assertEquals(numberOfMatchingMachines, numberOfMachines);
-  }
-
-  @SuppressWarnings("SameParameterValue")
-  private void verifyNumberOfMachinesWithSpecificVolume(
-      Collection<InternalMachineConfig> machineConfigs,
-      int numberOfMachines,
-      String volumeName,
-      String volumeMountPath) {
-
-    long numberOfMatchingMachines =
-        machineConfigs
-            .stream()
-            .filter(machineConfig -> machineConfig.getVolumes().size() == 1)
-            .filter(machineConfig -> machineConfig.getVolumes().get(volumeName) != null)
-            .filter(
-                machineConfig ->
-                    volumeMountPath.equals(machineConfig.getVolumes().get(volumeName).getPath()))
             .count();
     assertEquals(numberOfMatchingMachines, numberOfMachines);
   }
@@ -803,6 +954,14 @@ public class KubernetesPluginsToolingApplierTest {
     List<Container> nonUserContainers = getNonUserContainers(kubernetesEnvironment);
     assertEquals(nonUserContainers.size(), 1);
     return nonUserContainers.get(0);
+  }
+
+  private Container getOnlyOneInitContainerFromPod(KubernetesEnvironment kubernetesEnvironment) {
+    Pod pod = kubernetesEnvironment.getPodsCopy().values().iterator().next();
+
+    List<Container> initContainer = pod.getSpec().getInitContainers();
+    assertEquals(initContainer.size(), 1);
+    return initContainer.get(0);
   }
 
   private void addPortToSingleContainerPlugin(
@@ -877,8 +1036,11 @@ public class KubernetesPluginsToolingApplierTest {
       String path) {
     Map<String, String> serverAttributes = new HashMap<>(attributes);
     serverAttributes.put("internal", Boolean.toString(!isExternal));
-    servers.put(
-        portName,
-        new ServerConfigImpl(Integer.toString(port) + "/tcp", protocol, path, serverAttributes));
+    servers.put(portName, new ServerConfigImpl(port + "/tcp", protocol, path, serverAttributes));
+  }
+
+  private void validateContainerNameName(String actual, String prefixExpected) {
+    Pattern pattern = Pattern.compile(prefixExpected + "\\w{3}");
+    assertTrue(pattern.matcher(actual).matches());
   }
 }

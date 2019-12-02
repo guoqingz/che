@@ -126,7 +126,7 @@ public class SystemServicePermissionsFilterTest {
   }
 
   @Test
-  public void rejectsGetStateForUserWithoutManageSystemPermission() throws Exception {
+  public void shouldNotRejectsGetStateForUserWithoutManageSystemPermission() throws Exception {
     permitSubject("nothing");
 
     given()
@@ -153,7 +153,7 @@ public class SystemServicePermissionsFilterTest {
 
   private static Set<String> getDeclaredPublicMethods(Class<?> c) {
     return Arrays.stream(c.getDeclaredMethods())
-        .filter(m -> Modifier.isPublic(c.getModifiers()))
+        .filter(method -> Modifier.isPublic(method.getModifiers()))
         .map(Method::getName)
         .collect(Collectors.toSet());
   }

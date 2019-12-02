@@ -49,6 +49,8 @@ export class ListCommandsController {
     this.commandsOrderBy = 'name';
   }
 
+  $onInit(): void { }
+
   /**
    * Update command selected status
    */
@@ -203,6 +205,6 @@ export class ListCommandsController {
       content += 'this selected command?';
     }
 
-    return this.confirmDialogService.showConfirmDialog('Remove commands', content, 'Delete');
+    return this.confirmDialogService.showConfirmDialog('Remove commands', content, { resolve: 'Delete' });
   }
 }

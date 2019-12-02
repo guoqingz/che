@@ -17,7 +17,7 @@
     <parent>
         <artifactId>che-parent</artifactId>
         <groupId>org.eclipse.che</groupId>
-        <version>7.0.0-beta-4.0-SNAPSHOT</version>
+        <version>7.6.0-SNAPSHOT</version>
         <relativePath>../pom.xml</relativePath>
     </parent>
     <groupId>org.eclipse.che.dashboard</groupId>
@@ -106,6 +106,7 @@
                         <include>*.json</include>
                         <include>*.js</include>
                         <include>.*</include>
+                        <include>yarn.lock</include>
                     </includes>
                 </configuration>
             </plugin>
@@ -204,11 +205,11 @@
                                 </goals>
                                 <configuration>
                                     <target>
-                                      <!-- install dependencies -->
-                                      <exec dir="${basedir}" executable="yarn" failonerror="true">
-                                        <arg value="install" />
-                                        <arg value="--ignore-optional" />
-                                      </exec>
+                                        <!-- install dependencies -->
+                                        <exec dir="${basedir}" executable="yarn" failonerror="true">
+                                            <arg value="install" />
+                                            <arg value="--ignore-optional" />
+                                        </exec>
                                     </target>
                                 </configuration>
                             </execution>

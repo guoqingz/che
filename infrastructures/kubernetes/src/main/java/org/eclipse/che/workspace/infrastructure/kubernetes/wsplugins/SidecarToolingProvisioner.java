@@ -20,9 +20,9 @@ import javax.inject.Inject;
 import org.eclipse.che.api.core.model.workspace.runtime.RuntimeIdentity;
 import org.eclipse.che.api.workspace.server.spi.InfrastructureException;
 import org.eclipse.che.api.workspace.server.wsplugins.ChePluginsApplier;
-import org.eclipse.che.api.workspace.server.wsplugins.PluginMetaRetriever;
+import org.eclipse.che.api.workspace.server.wsplugins.PluginFQNParser;
 import org.eclipse.che.api.workspace.server.wsplugins.model.ChePlugin;
-import org.eclipse.che.api.workspace.server.wsplugins.model.PluginMeta;
+import org.eclipse.che.api.workspace.server.wsplugins.model.PluginFQN;
 import org.eclipse.che.commons.annotation.Traced;
 import org.eclipse.che.workspace.infrastructure.kubernetes.StartSynchronizer;
 import org.eclipse.che.workspace.infrastructure.kubernetes.environment.KubernetesEnvironment;
@@ -42,31 +42,32 @@ public class SidecarToolingProvisioner<E extends KubernetesEnvironment> {
 
   private final Map<String, ChePluginsApplier> workspaceNextAppliers;
   private final KubernetesBrokerInitContainerApplier<E> brokerApplier;
-  private final PluginMetaRetriever pluginMetaRetriever;
+  private final PluginFQNParser pluginFQNParser;
   private final PluginBrokerManager<E> pluginBrokerManager;
 
   @Inject
   public SidecarToolingProvisioner(
       Map<String, ChePluginsApplier> workspaceNextAppliers,
       KubernetesBrokerInitContainerApplier<E> brokerApplier,
-      PluginMetaRetriever pluginMetaRetriever,
+      PluginFQNParser pluginFQNParser,
       PluginBrokerManager<E> pluginBrokerManager) {
     this.workspaceNextAppliers = ImmutableMap.copyOf(workspaceNextAppliers);
     this.brokerApplier = brokerApplier;
-    this.pluginMetaRetriever = pluginMetaRetriever;
+    this.pluginFQNParser = pluginFQNParser;
     this.pluginBrokerManager = pluginBrokerManager;
   }
 
   @Traced
   @Beta
-  public void provision(RuntimeIdentity id, StartSynchronizer startSynchronizer, E environment)
+  public void provision(
+      RuntimeIdentity identity, StartSynchronizer startSynchronizer, E environment)
       throws InfrastructureException {
 
-    Collection<PluginMeta> pluginsMeta = pluginMetaRetriever.get(environment.getAttributes());
-    if (pluginsMeta.isEmpty()) {
+    Collection<PluginFQN> pluginFQNs = pluginFQNParser.parsePlugins(environment.getAttributes());
+    if (pluginFQNs.isEmpty()) {
       return;
     }
-    LOG.debug("Started sidecar tooling provisioning workspace '{}'", id.getWorkspaceId());
+    LOG.debug("Started sidecar tooling provisioning workspace '{}'", identity.getWorkspaceId());
     String recipeType = environment.getType();
     ChePluginsApplier pluginsApplier = workspaceNextAppliers.get(recipeType);
     if (pluginsApplier == null) {
@@ -76,12 +77,12 @@ public class SidecarToolingProvisioner<E extends KubernetesEnvironment> {
 
     boolean isEphemeral = EphemeralWorkspaceUtility.isEphemeral(environment.getAttributes());
     List<ChePlugin> chePlugins =
-        pluginBrokerManager.getTooling(id, startSynchronizer, pluginsMeta, isEphemeral);
+        pluginBrokerManager.getTooling(identity, startSynchronizer, pluginFQNs, isEphemeral);
 
-    pluginsApplier.apply(id, environment, chePlugins);
+    pluginsApplier.apply(identity, environment, chePlugins);
     if (isEphemeral) {
-      brokerApplier.apply(environment, id, pluginsMeta);
+      brokerApplier.apply(environment, identity, pluginFQNs);
     }
-    LOG.debug("Finished sidecar tooling provisioning workspace '{}'", id.getWorkspaceId());
+    LOG.debug("Finished sidecar tooling provisioning workspace '{}'", identity.getWorkspaceId());
   }
 }

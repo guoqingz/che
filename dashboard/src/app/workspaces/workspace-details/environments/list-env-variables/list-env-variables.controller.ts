@@ -54,7 +54,9 @@ export class ListEnvVariablesController {
     this.$mdDialog = $mdDialog;
     this.lodash = lodash;
     this.confirmDialogService = confirmDialogService;
+  }
 
+  $onInit(): void {
     this.buildVariablesList();
   }
 
@@ -189,7 +191,7 @@ export class ListEnvVariablesController {
       content += 'this selected variable?';
     }
 
-    return this.confirmDialogService.showConfirmDialog('Remove variables', content, 'Delete');
+    return this.confirmDialogService.showConfirmDialog('Remove variables', content, { resolve: 'Delete' });
   }
 
 }

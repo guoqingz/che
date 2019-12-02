@@ -15,18 +15,20 @@ import static org.eclipse.che.api.factory.shared.Constants.CURRENT_VERSION;
 import static org.eclipse.che.api.factory.shared.Constants.URL_PARAMETER_NAME;
 import static org.eclipse.che.dto.server.DtoFactory.newDto;
 
+import java.util.Collections;
 import java.util.Map;
 import javax.inject.Inject;
 import javax.inject.Singleton;
 import javax.validation.constraints.NotNull;
 import org.eclipse.che.api.core.BadRequestException;
 import org.eclipse.che.api.core.ServerException;
-import org.eclipse.che.api.devfile.server.URLFetcher;
-import org.eclipse.che.api.factory.server.FactoryParametersResolver;
+import org.eclipse.che.api.factory.server.DefaultFactoryParameterResolver;
 import org.eclipse.che.api.factory.server.urlfactory.ProjectConfigDtoMerger;
 import org.eclipse.che.api.factory.server.urlfactory.URLFactoryBuilder;
 import org.eclipse.che.api.factory.shared.dto.FactoryDto;
+import org.eclipse.che.api.workspace.server.devfile.URLFetcher;
 import org.eclipse.che.api.workspace.shared.dto.ProjectConfigDto;
+import org.eclipse.che.api.workspace.shared.dto.devfile.ProjectDto;
 
 /**
  * Provides Factory Parameters resolver for github repositories.
@@ -34,18 +36,13 @@ import org.eclipse.che.api.workspace.shared.dto.ProjectConfigDto;
  * @author Florent Benoit
  */
 @Singleton
-public class GithubFactoryParametersResolver implements FactoryParametersResolver {
+public class GithubFactoryParametersResolver extends DefaultFactoryParameterResolver {
 
   /** Parser which will allow to check validity of URLs and create objects. */
   private GithubURLParser githubUrlParser;
 
-  private final URLFetcher urlFetcher;
-
   /** Builder allowing to build objects from github URL. */
   private GithubSourceStorageBuilder githubSourceStorageBuilder;
-
-  /** Builds factory by fetching json/devfile content from given URL */
-  private URLFactoryBuilder urlFactoryBuilder;
 
   /** ProjectDtoMerger */
   @Inject private ProjectConfigDtoMerger projectConfigDtoMerger;
@@ -57,10 +54,9 @@ public class GithubFactoryParametersResolver implements FactoryParametersResolve
       GithubSourceStorageBuilder githubSourceStorageBuilder,
       URLFactoryBuilder urlFactoryBuilder,
       ProjectConfigDtoMerger projectConfigDtoMerger) {
+    super(urlFactoryBuilder, urlFetcher);
     this.githubUrlParser = githubUrlParser;
-    this.urlFetcher = urlFetcher;
     this.githubSourceStorageBuilder = githubSourceStorageBuilder;
-    this.urlFactoryBuilder = urlFactoryBuilder;
     this.projectConfigDtoMerger = projectConfigDtoMerger;
   }
 
@@ -95,7 +91,9 @@ public class GithubFactoryParametersResolver implements FactoryParametersResolve
     FactoryDto factory =
         urlFactoryBuilder
             .createFactoryFromDevfile(
-                githubUrl, fileName -> urlFetcher.fetch(githubUrl.rawFileLocation(fileName)))
+                githubUrl,
+                fileName -> urlFetcher.fetch(githubUrl.rawFileLocation(fileName)),
+                extractOverrideParams(factoryParameters))
             .orElseGet(
                 () ->
                     urlFactoryBuilder
@@ -105,21 +103,28 @@ public class GithubFactoryParametersResolver implements FactoryParametersResolve
                                 newDto(FactoryDto.class)
                                     .withV(CURRENT_VERSION)
                                     .withSource("repo")));
-    // add workspace configuration if not defined
-    if (factory.getWorkspace() == null) {
-      factory.setWorkspace(
-          urlFactoryBuilder.buildDefaultWorkspaceConfig(githubUrl.getRepository()));
-    }
 
-    // apply merging operation from existing and computed settings if needed
-    return projectConfigDtoMerger.merge(
-        factory,
-        () -> {
-          // Compute project configuration
-          return newDto(ProjectConfigDto.class)
-              .withSource(githubSourceStorageBuilder.build(githubUrl))
-              .withName(githubUrl.getRepository())
-              .withPath("/".concat(githubUrl.getRepository()));
-        });
+    if (factory.getWorkspace() != null) {
+      return projectConfigDtoMerger.merge(
+          factory,
+          () -> {
+            // Compute project configuration
+            return newDto(ProjectConfigDto.class)
+                .withSource(githubSourceStorageBuilder.buildWorkspaceConfigSource(githubUrl))
+                .withName(githubUrl.getRepository())
+                .withPath("/".concat(githubUrl.getRepository()));
+          });
+    } else if (factory.getDevfile() == null) {
+      // initialize default devfile and github project
+      factory.setDevfile(urlFactoryBuilder.buildDefaultDevfile(githubUrl.getRepository()));
+      factory
+          .getDevfile()
+          .setProjects(
+              Collections.singletonList(
+                  newDto(ProjectDto.class)
+                      .withSource(githubSourceStorageBuilder.buildDevfileSource(githubUrl))
+                      .withName(githubUrl.getRepository())));
+    }
+    return factory;
   }
 }

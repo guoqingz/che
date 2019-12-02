@@ -11,7 +11,7 @@
  */
 package org.eclipse.che.workspace.infrastructure.kubernetes;
 
-import static org.eclipse.che.workspace.infrastructure.kubernetes.Constants.MACHINE_NAME_ANNOTATION_FMT;
+import static org.eclipse.che.workspace.infrastructure.kubernetes.Names.createMachineNameAnnotations;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.Mockito.doReturn;
 import static org.testng.Assert.assertEquals;
@@ -37,7 +37,7 @@ import java.util.List;
 import java.util.Map;
 import org.eclipse.che.api.core.model.workspace.runtime.RuntimeIdentity;
 import org.eclipse.che.api.workspace.server.spi.environment.InternalMachineConfig;
-import org.eclipse.che.api.workspace.server.wsplugins.model.PluginMeta;
+import org.eclipse.che.api.workspace.server.wsplugins.model.PluginFQN;
 import org.eclipse.che.workspace.infrastructure.kubernetes.environment.KubernetesEnvironment;
 import org.eclipse.che.workspace.infrastructure.kubernetes.wsplugins.KubernetesBrokerInitContainerApplier;
 import org.eclipse.che.workspace.infrastructure.kubernetes.wsplugins.brokerphases.BrokerEnvironmentFactory;
@@ -59,23 +59,21 @@ public class KubernetesBrokerInitContainerApplierTest {
   private static final String WORKSPACE_MACHINE_NAME = "workspaceMachine";
   private static final String WORKSPACE_CONTAINER_NAME = "workspaceContainer";
   private static final Map<String, String> workspacePodAnnotations =
-      ImmutableMap.of(
-          String.format(MACHINE_NAME_ANNOTATION_FMT, WORKSPACE_CONTAINER_NAME),
-          WORKSPACE_MACHINE_NAME);
+      createMachineNameAnnotations(WORKSPACE_CONTAINER_NAME, WORKSPACE_MACHINE_NAME);
 
   private static final String BROKER_POD_NAME = "brokerPod";
   private static final String BROKER_MACHINE_NAME = "brokerMachine";
   private static final String BROKER_CONTAINER_NAME = "brokerContainer";
   private static final String BROKER_CONFIGMAP_NAME = "brokerConfigMap";
   private static final Map<String, String> brokerPodAnnotations =
-      ImmutableMap.of(
-          String.format(MACHINE_NAME_ANNOTATION_FMT, BROKER_CONTAINER_NAME), BROKER_MACHINE_NAME);
+      createMachineNameAnnotations(BROKER_CONTAINER_NAME, BROKER_MACHINE_NAME);
+
   private static final Map<String, String> brokerConfigMapData =
       ImmutableMap.of("brokerConfigKey", "brokerConfigValue");
 
   @Mock private BrokerEnvironmentFactory<KubernetesEnvironment> brokerEnvironmentFactory;
   @Mock private RuntimeIdentity runtimeID;
-  @Mock private Collection<PluginMeta> pluginsMeta;
+  @Mock private Collection<PluginFQN> pluginFQNs;
 
   // Broker Environment mocks
   @Mock private InternalMachineConfig brokerMachine;
@@ -123,14 +121,14 @@ public class KubernetesBrokerInitContainerApplierTest {
             .setConfigMaps(ImmutableMap.of(BROKER_CONFIGMAP_NAME, brokerConfigMap))
             .setMachines(ImmutableMap.of(BROKER_MACHINE_NAME, brokerMachine))
             .build();
-    doReturn(brokerEnvironment).when(brokerEnvironmentFactory).create(any(), any(), any());
+    doReturn(brokerEnvironment).when(brokerEnvironmentFactory).create(any(), any());
 
     applier = new KubernetesBrokerInitContainerApplier<>(brokerEnvironmentFactory);
   }
 
   @Test
   public void shouldAddBrokerMachineToWorkspaceEnvironment() throws Exception {
-    applier.apply(workspaceEnvironment, runtimeID, pluginsMeta);
+    applier.apply(workspaceEnvironment, runtimeID, pluginFQNs);
 
     assertNotNull(workspaceEnvironment.getMachines());
     assertTrue(workspaceEnvironment.getMachines().values().contains(brokerMachine));
@@ -138,7 +136,7 @@ public class KubernetesBrokerInitContainerApplierTest {
 
   @Test
   public void shouldAddBrokerConfigMapsToWorkspaceEnvironment() throws Exception {
-    applier.apply(workspaceEnvironment, runtimeID, pluginsMeta);
+    applier.apply(workspaceEnvironment, runtimeID, pluginFQNs);
 
     ConfigMap workspaceConfigMap = workspaceEnvironment.getConfigMaps().get(BROKER_CONFIGMAP_NAME);
     assertNotNull(workspaceConfigMap);
@@ -153,7 +151,7 @@ public class KubernetesBrokerInitContainerApplierTest {
 
   @Test
   public void shouldAddBrokerAsInitContainerOnWorkspacePod() throws Exception {
-    applier.apply(workspaceEnvironment, runtimeID, pluginsMeta);
+    applier.apply(workspaceEnvironment, runtimeID, pluginFQNs);
 
     List<Container> initContainers = workspacePod.getSpec().getInitContainers();
     assertEquals(initContainers.size(), 1);
@@ -162,7 +160,7 @@ public class KubernetesBrokerInitContainerApplierTest {
 
   @Test
   public void shouldAddBrokerVolumesToWorkspacePod() throws Exception {
-    applier.apply(workspaceEnvironment, runtimeID, pluginsMeta);
+    applier.apply(workspaceEnvironment, runtimeID, pluginFQNs);
 
     List<Volume> workspaceVolumes = workspacePod.getSpec().getVolumes();
     assertEquals(workspaceVolumes.size(), 1);

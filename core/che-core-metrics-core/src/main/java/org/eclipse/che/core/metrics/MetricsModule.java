@@ -16,6 +16,7 @@ import com.google.inject.AbstractModule;
 import com.google.inject.multibindings.Multibinder;
 import io.github.mweirauch.micrometer.jvm.extras.ProcessMemoryMetrics;
 import io.github.mweirauch.micrometer.jvm.extras.ProcessThreadMetrics;
+import io.micrometer.core.instrument.MeterRegistry;
 import io.micrometer.core.instrument.binder.MeterBinder;
 import io.micrometer.core.instrument.binder.jvm.ClassLoaderMetrics;
 import io.micrometer.core.instrument.binder.jvm.JvmGcMetrics;
@@ -27,6 +28,7 @@ import io.micrometer.core.instrument.binder.system.ProcessorMetrics;
 import io.micrometer.core.instrument.binder.system.UptimeMetrics;
 import io.micrometer.prometheus.PrometheusMeterRegistry;
 import io.prometheus.client.CollectorRegistry;
+import okhttp3.EventListener;
 
 @Beta
 public class MetricsModule extends AbstractModule {
@@ -38,6 +40,7 @@ public class MetricsModule extends AbstractModule {
     bind(PrometheusMeterRegistry.class)
         .toProvider(PrometheusMeterRegistryProvider.class)
         .asEagerSingleton();
+    bind(MeterRegistry.class).to(PrometheusMeterRegistry.class);
 
     Multibinder<MeterBinder> meterMultibinder =
         Multibinder.newSetBinder(binder(), MeterBinder.class);
@@ -53,5 +56,7 @@ public class MetricsModule extends AbstractModule {
     meterMultibinder.addBinding().to(ApiResponseCounter.class);
     meterMultibinder.addBinding().to(ProcessMemoryMetrics.class);
     meterMultibinder.addBinding().to(ProcessThreadMetrics.class);
+
+    bind(EventListener.class).toProvider(OkHttpMetricsEventListenerProvider.class);
   }
 }

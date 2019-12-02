@@ -11,6 +11,9 @@
  */
 package org.eclipse.che.workspace.infrastructure.kubernetes.namespace;
 
+import static java.lang.String.format;
+import static org.eclipse.che.workspace.infrastructure.kubernetes.namespace.KubernetesObjectUtil.isLabeled;
+
 import com.google.common.annotations.VisibleForTesting;
 import io.fabric8.kubernetes.api.model.ConfigMap;
 import io.fabric8.kubernetes.api.model.DoneableServiceAccount;
@@ -56,6 +59,8 @@ public class KubernetesNamespace {
    * https://kubernetes.io/docs/tasks/configure-pod-container/configure-service-account/
    */
   private static final String DEFAULT_SERVICE_ACCOUNT_NAME = "default";
+
+  protected static final String MANAGED_NAMESPACE_LABEL = "che-managed";
 
   private final String workspaceId;
   private final String name;
@@ -108,12 +113,88 @@ public class KubernetesNamespace {
    *
    * <p>Preparing includes creating if needed and waiting for default service account.
    *
-   * @throws InfrastructureException if any exception occurs during namespace preparing
+   * @param markManaged mark the namespace as managed by Che. Also applies for already existing
+   *     namespaces.
+   * @param canCreate defines what to do when the namespace is not found. The namespace is created
+   *     when {@code true}, otherwise an exception is thrown.
+   * @throws InfrastructureException if any exception occurs during namespace preparation or if the
+   *     namespace doesn't exist and {@code canCreate} is {@code false}.
    */
-  void prepare() throws InfrastructureException {
+  void prepare(boolean markManaged, boolean canCreate) throws InfrastructureException {
     KubernetesClient client = clientFactory.create(workspaceId);
-    if (get(name, client) == null) {
-      create(name, client);
+    Namespace namespace = get(name, client);
+
+    if (namespace == null) {
+      if (!canCreate) {
+        throw new InfrastructureException(
+            format("Creating the namespace '%s' is not allowed, yet it was not found.", name));
+      }
+      namespace = create(name, client);
+    }
+
+    if (markManaged && !isLabeled(namespace, MANAGED_NAMESPACE_LABEL, "true")) {
+      // provision managed label is marking is requested but label is missing
+      KubernetesObjectUtil.putLabel(namespace, MANAGED_NAMESPACE_LABEL, "true");
+      update(namespace, client);
+    }
+  }
+
+  /**
+   * Deletes the namespace. Deleting a non-existent namespace is not an error as is not an attempt
+   * to delete a namespace that is already being deleted.
+   *
+   * @throws InfrastructureException if the namespace is not marked managed or when any unexpected
+   *     exception occurs during namespace deletion
+   */
+  void deleteIfManaged() throws InfrastructureException {
+    KubernetesClient client = clientFactory.create(workspaceId);
+
+    if (!isManagedInternal(client)) {
+      throw new InfrastructureException(
+          format(
+              "Can't delete namespace '%s' that contains"
+                  + " runtime of workspace '%s' because it doesn't have the '"
+                  + MANAGED_NAMESPACE_LABEL
+                  + "' label equal to 'true'.",
+              name,
+              workspaceId));
+    }
+
+    try {
+      delete(name, client);
+    } catch (KubernetesClientException e) {
+      if (e.getCode() == 403) {
+        throw new InfrastructureException(
+            format(
+                "Could not access the namespace %s when deleting it for workspace %s",
+                name, workspaceId),
+            e);
+      }
+
+      throw new KubernetesInfrastructureException(e);
+    }
+  }
+
+  private boolean isManagedInternal(KubernetesClient client) throws InfrastructureException {
+    try {
+      Namespace namespace = client.namespaces().withName(name).get();
+      return namespace.getMetadata().getLabels() != null
+          && "true".equals(namespace.getMetadata().getLabels().get(MANAGED_NAMESPACE_LABEL));
+    } catch (KubernetesClientException e) {
+      if (e.getCode() == 403) {
+        throw new InfrastructureException(
+            format(
+                "Could not access the namespace %s when trying to determine if it is managed "
+                    + "for workspace %s",
+                name, workspaceId),
+            e);
+      } else if (e.getCode() == 404) {
+        // we don't want to block whatever work the caller is doing on the namespace. The caller
+        // will fail anyway if the namespace doesn't exist.
+        return true;
+      }
+
+      throw new KubernetesInfrastructureException(e);
     }
   }
 
@@ -193,19 +274,59 @@ public class KubernetesNamespace {
     }
   }
 
-  private void create(String namespaceName, KubernetesClient client)
+  private Namespace create(String namespaceName, KubernetesClient client)
       throws InfrastructureException {
     try {
-      client
-          .namespaces()
-          .createNew()
-          .withNewMetadata()
-          .withName(namespaceName)
-          .endMetadata()
-          .done();
+      Namespace ns =
+          client
+              .namespaces()
+              .createNew()
+              .withNewMetadata()
+              .withName(namespaceName)
+              .endMetadata()
+              .done();
       waitDefaultServiceAccount(namespaceName, client);
+
+      return ns;
     } catch (KubernetesClientException e) {
+      if (e.getCode() == 403) {
+        LOG.error(
+            "Unable to create new Kubernetes project due to lack of permissions."
+                + "When using workspace namespace placeholders, service account with lenient permissions (cluster-admin) must be used.");
+      }
       throw new KubernetesInfrastructureException(e);
+    }
+  }
+
+  private void update(Namespace namespace, KubernetesClient client) throws InfrastructureException {
+    try {
+      client.namespaces().createOrReplace(namespace);
+    } catch (KubernetesClientException e) {
+      if (e.getCode() == 403) {
+        LOG.error(
+            "Unable to update new Kubernetes namespace due to lack of permissions."
+                + "When using workspace namespace placeholders, service account with lenient permissions (cluster-admin) must be used.");
+      }
+      throw new KubernetesInfrastructureException(e);
+    }
+  }
+
+  private void delete(String namespaceName, KubernetesClient client)
+      throws InfrastructureException {
+    try {
+      client.namespaces().withName(namespaceName).delete();
+    } catch (KubernetesClientException e) {
+      if (e.getCode() == 404) {
+        LOG.warn(
+            format(
+                "Tried to delete namespace '%s' but it doesn't exist in the cluster.",
+                namespaceName),
+            e);
+      } else if (e.getCode() == 409) {
+        LOG.info(format("The namespace '%s' is currently being deleted.", namespaceName), e);
+      } else {
+        throw new KubernetesInfrastructureException(e);
+      }
     }
   }
 
@@ -282,6 +403,7 @@ public class KubernetesNamespace {
   }
 
   protected interface RemoveOperation {
+
     void perform() throws InfrastructureException;
   }
 }

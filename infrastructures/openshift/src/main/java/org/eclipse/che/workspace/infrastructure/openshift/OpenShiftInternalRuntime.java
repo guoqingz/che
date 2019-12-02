@@ -34,7 +34,6 @@ import org.eclipse.che.commons.tracing.TracingTags;
 import org.eclipse.che.workspace.infrastructure.kubernetes.KubernetesInternalRuntime;
 import org.eclipse.che.workspace.infrastructure.kubernetes.RuntimeHangingDetector;
 import org.eclipse.che.workspace.infrastructure.kubernetes.StartSynchronizerFactory;
-import org.eclipse.che.workspace.infrastructure.kubernetes.bootstrapper.KubernetesBootstrapperFactory;
 import org.eclipse.che.workspace.infrastructure.kubernetes.cache.KubernetesMachineCache;
 import org.eclipse.che.workspace.infrastructure.kubernetes.cache.KubernetesRuntimeStateCache;
 import org.eclipse.che.workspace.infrastructure.kubernetes.namespace.pvc.WorkspaceVolumesStrategy;
@@ -44,6 +43,7 @@ import org.eclipse.che.workspace.infrastructure.kubernetes.util.UnrecoverablePod
 import org.eclipse.che.workspace.infrastructure.kubernetes.wsplugins.SidecarToolingProvisioner;
 import org.eclipse.che.workspace.infrastructure.openshift.environment.OpenShiftEnvironment;
 import org.eclipse.che.workspace.infrastructure.openshift.project.OpenShiftProject;
+import org.eclipse.che.workspace.infrastructure.openshift.provision.OpenShiftPreviewUrlCommandProvisioner;
 import org.eclipse.che.workspace.infrastructure.openshift.server.OpenShiftServerResolver;
 
 /**
@@ -60,7 +60,6 @@ public class OpenShiftInternalRuntime extends KubernetesInternalRuntime<OpenShif
       @Named("che.infra.kubernetes.ingress_start_timeout_min") int ingressStartTimeout,
       NoOpURLRewriter urlRewriter,
       UnrecoverablePodEventListenerFactory unrecoverablePodEventListenerFactory,
-      KubernetesBootstrapperFactory bootstrapperFactory,
       ServersCheckerFactory serverCheckerFactory,
       WorkspaceVolumesStrategy volumesStrategy,
       ProbeScheduler probeScheduler,
@@ -74,6 +73,7 @@ public class OpenShiftInternalRuntime extends KubernetesInternalRuntime<OpenShif
       OpenShiftEnvironmentProvisioner kubernetesEnvironmentProvisioner,
       SidecarToolingProvisioner<OpenShiftEnvironment> toolingProvisioner,
       RuntimeHangingDetector runtimeHangingDetector,
+      OpenShiftPreviewUrlCommandProvisioner previewUrlCommandProvisioner,
       Tracer tracer,
       @Assisted OpenShiftRuntimeContext context,
       @Assisted OpenShiftProject project) {
@@ -82,7 +82,6 @@ public class OpenShiftInternalRuntime extends KubernetesInternalRuntime<OpenShif
         ingressStartTimeout,
         urlRewriter,
         unrecoverablePodEventListenerFactory,
-        bootstrapperFactory,
         serverCheckerFactory,
         volumesStrategy,
         probeScheduler,
@@ -95,7 +94,9 @@ public class OpenShiftInternalRuntime extends KubernetesInternalRuntime<OpenShif
         internalEnvironmentProvisioners,
         kubernetesEnvironmentProvisioner,
         toolingProvisioner,
+        null,
         runtimeHangingDetector,
+        previewUrlCommandProvisioner,
         tracer,
         context,
         project);

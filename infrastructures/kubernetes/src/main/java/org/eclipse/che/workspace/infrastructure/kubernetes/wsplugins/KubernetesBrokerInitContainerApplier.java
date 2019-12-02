@@ -21,7 +21,7 @@ import org.eclipse.che.api.core.model.workspace.runtime.RuntimeIdentity;
 import org.eclipse.che.api.workspace.server.spi.InfrastructureException;
 import org.eclipse.che.api.workspace.server.spi.environment.InternalEnvironment;
 import org.eclipse.che.api.workspace.server.spi.environment.InternalMachineConfig;
-import org.eclipse.che.api.workspace.server.wsplugins.model.PluginMeta;
+import org.eclipse.che.api.workspace.server.wsplugins.model.PluginFQN;
 import org.eclipse.che.workspace.infrastructure.kubernetes.Names;
 import org.eclipse.che.workspace.infrastructure.kubernetes.environment.KubernetesEnvironment;
 import org.eclipse.che.workspace.infrastructure.kubernetes.environment.KubernetesEnvironment.PodData;
@@ -52,11 +52,10 @@ public class KubernetesBrokerInitContainerApplier<E extends KubernetesEnvironmen
    * broker's configmap, machines, and volumes added in addition to the init container
    */
   public void apply(
-      E workspaceEnvironment, RuntimeIdentity runtimeID, Collection<PluginMeta> pluginsMeta)
+      E workspaceEnvironment, RuntimeIdentity runtimeID, Collection<PluginFQN> pluginFQNs)
       throws InfrastructureException {
 
-    E brokerEnvironment =
-        brokerEnvironmentFactory.create(pluginsMeta, runtimeID, new BrokersResult());
+    E brokerEnvironment = brokerEnvironmentFactory.create(pluginFQNs, runtimeID);
 
     Map<String, PodData> workspacePods = workspaceEnvironment.getPodsData();
     if (workspacePods.size() != 1) {
@@ -78,7 +77,9 @@ public class KubernetesBrokerInitContainerApplier<E extends KubernetesEnvironmen
           brokerEnvironment.getMachines().get(Names.machineName(brokerPod, container));
       if (brokerMachine == null) {
         throw new InfrastructureException(
-            String.format("Could not find machine for broker container %s", container.getName()));
+            String.format(
+                "Could not retrieve the specification of the plugin broker container %s",
+                container.getName()));
       }
       workspaceEnvironment
           .getMachines()

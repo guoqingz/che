@@ -36,6 +36,7 @@ import javax.inject.Singleton;
 import org.eclipse.che.api.workspace.server.spi.InfrastructureException;
 import org.eclipse.che.commons.lang.concurrent.LoggingUncaughtExceptionHandler;
 import org.eclipse.che.commons.lang.concurrent.ThreadLocalPropagateContext;
+import org.eclipse.che.commons.observability.ExecutorServiceWrapper;
 import org.eclipse.che.workspace.infrastructure.kubernetes.namespace.KubernetesDeployments;
 import org.eclipse.che.workspace.infrastructure.kubernetes.namespace.KubernetesNamespaceFactory;
 import org.eclipse.che.workspace.infrastructure.kubernetes.provision.SecurityContextProvisioner;
@@ -85,43 +86,49 @@ public class PVCSubPathHelper {
       @Named("che.infra.kubernetes.pvc.jobs.memorylimit") String jobMemoryLimit,
       @Named("che.infra.kubernetes.pvc.jobs.image") String jobImage,
       KubernetesNamespaceFactory factory,
-      SecurityContextProvisioner securityContextProvisioner) {
+      SecurityContextProvisioner securityContextProvisioner,
+      ExecutorServiceWrapper executorServiceWrapper) {
     this.jobMemoryLimit = jobMemoryLimit;
     this.jobImage = jobImage;
     this.factory = factory;
     this.securityContextProvisioner = securityContextProvisioner;
     this.executor =
-        Executors.newFixedThreadPool(
-            COUNT_THREADS,
-            new ThreadFactoryBuilder()
-                .setNameFormat("PVCSubPathHelper-ThreadPool-%d")
-                .setUncaughtExceptionHandler(LoggingUncaughtExceptionHandler.getInstance())
-                .setDaemon(false)
-                .build());
+        executorServiceWrapper.wrap(
+            Executors.newFixedThreadPool(
+                COUNT_THREADS,
+                new ThreadFactoryBuilder()
+                    .setNameFormat("PVCSubPathHelper-ThreadPool-%d")
+                    .setUncaughtExceptionHandler(LoggingUncaughtExceptionHandler.getInstance())
+                    .setDaemon(false)
+                    .build()),
+            PVCSubPathHelper.class.getName());
   }
 
   /**
    * Performs create workspace directories job by given paths and waits until it finished.
    *
    * @param workspaceId workspace identifier
+   * @param namespace
    * @param dirs workspace directories to create
    */
-  void createDirs(String workspaceId, String pvcName, String... dirs) {
+  void createDirs(String workspaceId, String namespace, String pvcName, String... dirs) {
     LOG.debug(
         "Preparing PVC `{}` for workspace `{}`. Directories to create: {}",
         pvcName,
         workspaceId,
         Arrays.toString(dirs));
-    execute(workspaceId, pvcName, MKDIR_COMMAND_BASE, dirs);
+    execute(workspaceId, namespace, pvcName, MKDIR_COMMAND_BASE, dirs);
   }
 
   /**
    * Asynchronously starts a job for removing workspace directories by given paths.
    *
    * @param workspaceId workspace identifier
+   * @param namespace
    * @param dirs workspace directories to remove
    */
-  CompletableFuture<Void> removeDirsAsync(String workspaceId, String pvcName, String... dirs) {
+  CompletableFuture<Void> removeDirsAsync(
+      String workspaceId, String namespace, String pvcName, String... dirs) {
     LOG.debug(
         "Removing files in PVC `{}` of workspace `{}`. Directories to remove: {}",
         pvcName,
@@ -129,18 +136,24 @@ public class PVCSubPathHelper {
         Arrays.toString(dirs));
     return CompletableFuture.runAsync(
         ThreadLocalPropagateContext.wrap(
-            () -> execute(workspaceId, pvcName, RM_COMMAND_BASE, dirs)),
+            () -> execute(workspaceId, namespace, pvcName, RM_COMMAND_BASE, dirs)),
         executor);
   }
 
   /**
    * Executes the job with the specified arguments.
    *
+   * @param namespace
    * @param commandBase the command base to execute
    * @param arguments the list of arguments for the specified job
    */
   @VisibleForTesting
-  void execute(String workspaceId, String pvcName, String[] commandBase, String... arguments) {
+  void execute(
+      String workspaceId,
+      String namespace,
+      String pvcName,
+      String[] commandBase,
+      String... arguments) {
     final String jobName = commandBase[0];
     final String podName = jobName + '-' + workspaceId;
     final String[] command = buildCommand(commandBase, arguments);
@@ -149,7 +162,7 @@ public class PVCSubPathHelper {
 
     KubernetesDeployments deployments = null;
     try {
-      deployments = factory.create(workspaceId).deployments();
+      deployments = factory.access(workspaceId, namespace).deployments();
       deployments.create(pod);
       final Pod finished = deployments.wait(podName, WAIT_POD_TIMEOUT_MIN, POD_PREDICATE::apply);
       PodStatus finishedStatus = finished.getStatus();

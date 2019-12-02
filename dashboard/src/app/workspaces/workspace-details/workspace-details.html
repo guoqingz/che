@@ -1,6 +1,9 @@
-<che-row-toolbar
-  che-title="{{workspaceDetailsController.workspaceName}}"
-  link-href="#/workspaces" link-title="Workspaces" class="workspace-details-toolbar">
+<che-description class="workspace-details-warning-info"
+                 ng-show="workspaceDetailsController.hasWarningMessage===true">
+  <span  ng-bind-html="workspaceDetailsController.warningMessage"></span>
+</che-description>
+<che-row-toolbar che-title="{{workspaceDetailsController.workspaceName}}" link-href="#/workspaces"
+  link-title="Workspaces" class="workspace-details-toolbar">
   <div layout="row" layout-align="start center" class="toolbar-info">
     <!-- is environment supported -->
     <workspace-status che-status="workspaceDetailsController.getWorkspaceStatus()"
@@ -19,9 +22,9 @@
   </div>
 </che-row-toolbar>
 
-<div><md-progress-linear class="progress-line" md-mode="indeterminate"
-                      ng-show="workspaceDetailsController.loading"></md-progress-linear></div>
-
+<div class="progress-line">
+  <md-progress-linear md-mode="indeterminate" ng-show="workspaceDetailsController.loading===true"></md-progress-linear>
+</div>
 <md-content ng-if="workspaceDetailsController.workspaceDetails" md-scroll-y flex
             class="workspace-details-content" md-theme="default">
   <md-tabs md-dynamic-height md-stretch-tabs="auto"
@@ -39,7 +42,7 @@
         <ng-form name="workspaceOverviewForm">
           <workspace-details-overview ng-init="workspaceDetailsController.setForm(workspaceDetailsController.tab.Overview, workspaceOverviewForm)"
                                       overview-form="workspaceOverviewForm"
-                                      on-change="workspaceDetailsController.checkEditMode(false)"
+                                      on-change="workspaceDetailsController.onWorkspaceChanged()"
                                       workspace-details="workspaceDetailsController.workspaceDetails"></workspace-details-overview>
         </ng-form>
       </md-tab-body>
@@ -53,48 +56,32 @@
       <md-tab-body>
         <workspace-details-projects
           workspace-details="workspaceDetailsController.workspaceDetails"
-          projects-on-change="workspaceDetailsController.checkEditMode(true)"></workspace-details-projects>
+          projects-on-change="workspaceDetailsController.checkEditMode()"></workspace-details-projects>
       </md-tab-body>
     </md-tab>
 
     <!-- Machines tab -->
-    <md-tab md-on-select="workspaceDetailsController.onSelectTab(workspaceDetailsController.tab.Machines);">
+    <md-tab ng-if="workspaceDetailsController.workspaceDetails.config"
+      md-on-select="workspaceDetailsController.onSelectTab(workspaceDetailsController.tab.Containers);">
       <md-tab-label>
-        <span class="che-tab-label-title">Machines</span>
+        <span class="che-tab-label-title">Containers</span>
       </md-tab-label>
       <md-tab-body>
         <workspace-machines workspace-details="workspaceDetailsController.workspaceDetails"
-                            on-change="workspaceDetailsController.checkEditMode(true)"></workspace-machines>
-      </md-tab-body>
-    </md-tab>
-
-    <!-- Installers tab -->
-    <md-tab md-on-select="workspaceDetailsController.onSelectTab(workspaceDetailsController.tab.Installers);">
-      <md-tab-label>
-        <i ng-show="workspaceDetailsController.isSwitchToPlugins()"
-          class="warning-state fa fa-exclamation-triangle" aria-hidden="true"></i>
-        <span class="che-tab-label-title">Installers</span>
-      </md-tab-label>
-      <md-tab-body>
-        <che-machine-selector content-title="Workspace Installers"
-                              workspace-details="workspaceDetailsController.workspaceDetails"
-                              on-change="workspaceDetailsController.checkEditMode(true)">
-          <che-machine-agents selected-machine="machine"
-                              is-plugins-enabled="workspaceDetailsController.isPluginsEnabled()"
-                              on-change="onChange()"></che-machine-agents>
-        </che-machine-selector>
+                            on-change="workspaceDetailsController.checkEditMode()"></workspace-machines>
       </md-tab-body>
     </md-tab>
 
     <!-- Servers -->
-    <md-tab md-on-select="workspaceDetailsController.onSelectTab(workspaceDetailsController.tab.Servers);">
+    <md-tab ng-if="workspaceDetailsController.workspaceDetails.config"
+      md-on-select="workspaceDetailsController.onSelectTab(workspaceDetailsController.tab.Servers);">
       <md-tab-label>
         <span class="che-tab-label-title">Servers</span>
       </md-tab-label>
       <md-tab-body>
         <che-machine-selector content-title="Servers"
                               workspace-details="workspaceDetailsController.workspaceDetails"
-                              on-change="workspaceDetailsController.checkEditMode(true)">
+                              on-change="workspaceDetailsController.checkEditMode()">
           <che-machine-servers environment-manager="environmentManager"
                                selected-machine="machine"
                                on-change="onChange()"></che-machine-servers>
@@ -103,14 +90,15 @@
     </md-tab>
 
     <!-- Env Variables -->
-    <md-tab md-on-select="workspaceDetailsController.onSelectTab(workspaceDetailsController.tab.Env_Variables);">
+    <md-tab ng-if="workspaceDetailsController.workspaceDetails.config"
+      md-on-select="workspaceDetailsController.onSelectTab(workspaceDetailsController.tab.Env_Variables);">
       <md-tab-label>
         <span class="che-tab-label-title">Env Variables</span>
       </md-tab-label>
       <md-tab-body>
         <che-machine-selector content-title="Environment variables"
                               workspace-details="workspaceDetailsController.workspaceDetails"
-                              on-change="workspaceDetailsController.checkEditMode(true)">
+                              on-change="workspaceDetailsController.checkEditMode()">
           <che-env-variables environment-manager="environmentManager"
                              selected-machine="machine"
                              on-change="onChange()"></che-env-variables>
@@ -119,14 +107,15 @@
     </md-tab>
 
     <!-- Machine Volumes -->
-    <md-tab md-on-select="workspaceDetailsController.onSelectTab(workspaceDetailsController.tab.Volumes);">
+    <md-tab ng-if="workspaceDetailsController.workspaceDetails.config"
+      md-on-select="workspaceDetailsController.onSelectTab(workspaceDetailsController.tab.Volumes);">
       <md-tab-label>
         <span class="che-tab-label-title">Volumes</span>
       </md-tab-label>
       <md-tab-body>
         <che-machine-selector content-title="Volumes"
                               workspace-details="workspaceDetailsController.workspaceDetails"
-                              on-change="workspaceDetailsController.checkEditMode(true)">
+                              on-change="workspaceDetailsController.checkEditMode()">
           <che-machine-volumes environment-manager="environmentManager"
                              selected-machine="machine"
                              on-change="onChange()"></che-machine-volumes>
@@ -135,7 +124,8 @@
     </md-tab>
 
     <!-- Config tab -->
-    <md-tab md-on-select="workspaceDetailsController.onSelectTab(workspaceDetailsController.tab.Config); isConfigActive = true"
+    <md-tab ng-if="workspaceDetailsController.workspaceDetails.config"
+      md-on-select="workspaceDetailsController.onSelectTab(workspaceDetailsController.tab.Config); isConfigActive = true"
       md-on-deselect="isConfigActive = false">
       <md-tab-label>
         <i ng-show="workspaceDetailsController.checkFormsNotValid(workspaceDetailsController.tab.Config)"
@@ -156,7 +146,8 @@
     </md-tab>
 
     <!-- SSH Tab -->
-    <md-tab md-on-select="workspaceDetailsController.onSelectTab(workspaceDetailsController.tab.SSH);">
+    <md-tab ng-if="workspaceDetailsController.workspaceDetails.config"
+      md-on-select="workspaceDetailsController.onSelectTab(workspaceDetailsController.tab.SSH);">
       <md-tab-label>
         <span class="che-tab-label-title">SSH</span>
       </md-tab-label>
@@ -165,35 +156,56 @@
       </md-tab-body>
     </md-tab>
 
-    <!-- Tools Tab -->
-    <md-tab md-on-select="workspaceDetailsController.onSelectTab(workspaceDetailsController.tab.Tools);">
-      <md-tab-label>
-        <span class="che-tab-label-title">Tools</span>
-      </md-tab-label>
-      <md-tab-body>
-        <che-machine-selector content-title="Configuration"
-                              workspace-details="workspaceDetailsController.workspaceDetails"
-                              on-change="workspaceDetailsController.checkEditMode(true)"
-                              filter="workspaceDetailsController.toolsFilter">
-          <workspace-details-tools selected-machine="machine"
-                                   on-change="onChange()"
-                                   environment-manager="environmentManager">
-          </workspace-details-tools>
-        </che-machine-selector>
-      </md-tab-body>
-    </md-tab>
-
     <!-- Plugins tab -->
     <md-tab ng-if="workspaceDetailsController.pluginRegistry"
-      md-on-select="workspaceDetailsController.onSelectTab(workspaceDetailsController.tab.Plugins);">
+            md-on-select="workspaceDetailsController.onSelectTab(workspaceDetailsController.tab.Plugins);">
       <md-tab-label>
+        <i ng-show="workspaceDetailsController.hasSelectedDeprecatedPlugins===true"
+           class="warning-state fa fa-exclamation-circle" aria-hidden="true"></i>
         <span class="che-tab-label-title">Plugins</span>
       </md-tab-label>
       <md-tab-body>
-        <workspace-plugins workspace-config="workspaceDetailsController.workspaceDetails.config"
+        <workspace-plugins workspace="workspaceDetailsController.workspaceDetails"
                            plugin-registry-location="workspaceDetailsController.pluginRegistry"
-                           on-change="workspaceDetailsController.checkEditMode(true)">
+                           on-change="workspaceDetailsController.checkEditMode()">
         </workspace-plugins>
+      </md-tab-body>
+    </md-tab>
+
+    <!-- Editors tab -->
+    <md-tab ng-if="workspaceDetailsController.pluginRegistry"
+      md-on-select="workspaceDetailsController.onSelectTab(workspaceDetailsController.tab.Editors);">
+      <md-tab-label>
+        <i ng-show="workspaceDetailsController.hasSelectedDeprecatedEditor===true"
+           class="warning-state fa fa-exclamation-circle" aria-hidden="true"></i>
+        <span class="che-tab-label-title">Editors</span>
+      </md-tab-label>
+      <md-tab-body>
+        <workspace-editors workspace="workspaceDetailsController.workspaceDetails"
+                           plugin-registry-location="workspaceDetailsController.pluginRegistry"
+                           on-change="workspaceDetailsController.checkEditMode()">
+        </workspace-editors>
+      </md-tab-body>
+    </md-tab>
+
+    <!-- Devfile tab -->
+    <md-tab ng-if="workspaceDetailsController.workspaceDetails.devfile"
+            md-on-select="workspaceDetailsController.onSelectTab(workspaceDetailsController.tab.Devfile); isDevfileActive = true"
+            md-on-deselect="isDevfileActive = false">
+    <md-tab-label>
+      <i ng-show="workspaceDetailsController.checkFormsNotValid(workspaceDetailsController.tab.Devfile)"
+        class="error-state fa fa-exclamation-circle" aria-hidden="true"></i>
+      <span class="che-tab-label-title">Devfile</span>
+    </md-tab-label>
+    <md-tab-body>
+      <che-label-container che-label-name="Workspace">
+        <ng-form name="workspaceDevfileForm">
+          <workspace-devfile-editor
+            is-active="isDevfileActive"
+            workspace-devfile="workspaceDetailsController.workspaceDetails.devfile"
+            workspace-devfile-on-change="workspaceDetailsController.onWorkspaceChanged()"></workspace-devfile-editor>
+          </ng-form>
+        </che-label-container>
       </md-tab-body>
     </md-tab>
 

@@ -19,39 +19,39 @@ export class Loader {
     constructor() {
         /** Show the loader */
         setTimeout(() => {
-            document.getElementById('workspace-loader').style.display = "block";
+            document.getElementById('workspace-loader')!.style.display = 'block';
             setTimeout(() => {
-                document.getElementById('workspace-loader').style.opacity = "1";
+                document.getElementById('workspace-loader')!.style.opacity = '1';
             }, 1);
         }, 1);
 
         /** Add click handler to maximize output */
-        document.getElementById('workspace-console').onclick = () => this.onclickConsole();
+        document.getElementById('workspace-console')!.onclick = () => this.onclickConsole();
 
-        document.getElementById('workspace-loader-reload').onclick = () => this.onclickReload();
+        document.getElementById('workspace-loader-reload')!.onclick = () => this.onclickReload();
     }
 
     hideLoader(): void {
-        document.getElementById('workspace-loader-label').style.display = 'none';
-        document.getElementById('workspace-loader-progress').style.display = 'none';
+        document.getElementById('workspace-loader-label')!.style.display = 'none';
+        document.getElementById('workspace-loader-progress')!.style.display = 'none';
     }
 
     showReload(): void {
-        document.getElementById('workspace-loader-reload').style.display = 'block';
+        document.getElementById('workspace-loader-reload')!.style.display = 'block';
     }
 
     /**
      * Adds a message to output console.
-     * 
+     *
      * @param message message to log
      */
     log(message: string): HTMLElement {
-        let container = document.getElementById("workspace-console-container");
-        if (container.childElementCount > 500) {
-            container.removeChild(container.firstChild)
+        const container = document.getElementById('workspace-console-container')!;
+        if (container.firstChild && container.childElementCount > 500) {
+            container.removeChild(container.firstChild);
         }
 
-        let element = document.createElement("pre");
+        const element = document.createElement('pre');
         element.innerHTML = message;
         container.appendChild(element);
         if (element.scrollIntoView) {
@@ -66,17 +66,17 @@ export class Loader {
      * @param message error message
      */
     error(message: string): void {
-        let element = this.log(message);
-        element.className = "error";
+        const element = this.log(message);
+        element.className = 'error';
     }
 
     onclickConsole(): void {
-        if (document.getElementById('workspace-loader').hasAttribute("max")) {
-            document.getElementById('workspace-loader').removeAttribute("max");
-            document.getElementById('workspace-console').removeAttribute("max");
+        if (document.getElementById('workspace-loader')!.hasAttribute('max')) {
+            document.getElementById('workspace-loader')!.removeAttribute('max');
+            document.getElementById('workspace-console')!.removeAttribute('max');
         } else {
-            document.getElementById('workspace-loader').setAttribute("max", "");
-            document.getElementById('workspace-console').setAttribute("max", "");
+            document.getElementById('workspace-loader')!.setAttribute('max', '');
+            document.getElementById('workspace-console')!.setAttribute('max', '');
         }
     }
 

@@ -11,10 +11,11 @@
  */
 package org.eclipse.che.api.workspace.activity;
 
+import static java.util.stream.Collectors.toList;
+
 import java.util.List;
 import java.util.Map;
 import java.util.concurrent.ConcurrentHashMap;
-import java.util.stream.Collectors;
 import javax.inject.Singleton;
 import org.eclipse.che.api.core.ConflictException;
 import org.eclipse.che.api.core.Page;
@@ -30,11 +31,6 @@ import org.eclipse.che.api.core.model.workspace.WorkspaceStatus;
 public class InmemoryWorkspaceActivityDao implements WorkspaceActivityDao {
 
   private final Map<String, WorkspaceActivity> workspaceActivities = new ConcurrentHashMap<>();
-
-  @Override
-  public void setExpiration(WorkspaceExpiration expiration) {
-    setExpirationTime(expiration.getWorkspaceId(), expiration.getExpiration());
-  }
 
   @Override
   public void setExpirationTime(String workspaceId, long expirationTime) {
@@ -53,7 +49,7 @@ public class InmemoryWorkspaceActivityDao implements WorkspaceActivityDao {
         .stream()
         .filter(a -> a.getExpiration() != null && a.getExpiration() < timestamp)
         .map(WorkspaceActivity::getWorkspaceId)
-        .collect(Collectors.toList());
+        .collect(toList());
   }
 
   @Override
@@ -94,24 +90,9 @@ public class InmemoryWorkspaceActivityDao implements WorkspaceActivityDao {
         workspaceActivities
             .values()
             .stream()
-            .filter(a -> a.getStatus() == status)
-            .filter(
-                a -> {
-                  switch (status) {
-                    case STOPPED:
-                      return isGreater(a.getLastStopped(), timestamp);
-                    case STOPPING:
-                      return isGreater(a.getLastStopped(), timestamp);
-                    case RUNNING:
-                      return isGreater(a.getLastStopped(), timestamp);
-                    case STARTING:
-                      return isGreater(a.getLastStopped(), timestamp);
-                    default:
-                      return false;
-                  }
-                })
+            .filter(a -> a.getStatus() == status && isGreater(a.getLastStopped(), timestamp))
             .map(WorkspaceActivity::getWorkspaceId)
-            .collect(Collectors.toList());
+            .collect(toList());
 
     int total = all.size();
     int from = skipCount > total ? total : (int) skipCount;
@@ -147,6 +128,15 @@ public class InmemoryWorkspaceActivityDao implements WorkspaceActivityDao {
     } else {
       workspaceActivities.put(activity.getWorkspaceId(), activity);
     }
+  }
+
+  @Override
+  public Page<WorkspaceActivity> getAll(int maxItems, long skipCount) {
+    return new Page<>(
+        workspaceActivities.values().stream().skip(skipCount).limit(maxItems).collect(toList()),
+        skipCount,
+        maxItems,
+        workspaceActivities.size());
   }
 
   private boolean isGreater(Long value, long threshold) {

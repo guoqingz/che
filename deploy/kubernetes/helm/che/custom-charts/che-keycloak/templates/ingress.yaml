@@ -7,7 +7,6 @@
 # SPDX-License-Identifier: EPL-2.0
 #
 
-
 apiVersion: extensions/v1beta1
 kind: Ingress
 metadata:
@@ -18,7 +17,6 @@ metadata:
     {{ .Values.global.ingressAnnotationsPrefix }}ingress.kubernetes.io/proxy-connect-timeout: "3600"
 {{- if .Values.global.tls.enabled }}
     {{ .Values.global.ingressAnnotationsPrefix }}ingress.kubernetes.io/ssl-redirect: "true"
-    kubernetes.io/tls-acme: "true"
 {{- else }}
     {{ .Values.global.ingressAnnotationsPrefix }}ingress.kubernetes.io/ssl-redirect: "false"
 {{- end }}
@@ -48,4 +46,3 @@ spec:
         backend:
           serviceName: keycloak
           servicePort: 5050
-

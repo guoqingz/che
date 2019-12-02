@@ -11,12 +11,11 @@
  */
 package org.eclipse.che.workspace.infrastructure.openshift.project;
 
-import static org.mockito.ArgumentMatchers.anyString;
-import static org.mockito.Mockito.doNothing;
+import static org.mockito.ArgumentMatchers.any;
+import static org.mockito.Mockito.lenient;
 import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.spy;
 import static org.mockito.Mockito.verify;
-import static org.mockito.Mockito.when;
 
 import org.eclipse.che.api.core.model.workspace.Workspace;
 import org.eclipse.che.api.core.notification.EventService;
@@ -35,19 +34,16 @@ import org.testng.annotations.Test;
 @Listeners(MockitoTestNGListener.class)
 public class RemoveProjectOnWorkspaceRemoveTest {
 
-  private static final String WORKSPACE_ID = "workspace123";
-
   @Mock private Workspace workspace;
+  @Mock private OpenShiftProjectFactory projectFactory;
 
   private RemoveProjectOnWorkspaceRemove removeProjectOnWorkspaceRemove;
 
   @BeforeMethod
   public void setUp() throws Exception {
-    removeProjectOnWorkspaceRemove = spy(new RemoveProjectOnWorkspaceRemove(null, null));
+    removeProjectOnWorkspaceRemove = spy(new RemoveProjectOnWorkspaceRemove(projectFactory));
 
-    doNothing().when(removeProjectOnWorkspaceRemove).doRemoveProject(anyString());
-
-    when(workspace.getId()).thenReturn(WORKSPACE_ID);
+    lenient().doNothing().when(projectFactory).deleteIfManaged(any());
   }
 
   @Test
@@ -60,9 +56,9 @@ public class RemoveProjectOnWorkspaceRemoveTest {
   }
 
   @Test
-  public void shouldRemoveProjectOnWorkspaceRemovedEvent() throws Exception {
+  public void shouldInvokeDeleteIfManagedMethodOnWorkspaceRemovedEvent() throws Exception {
     removeProjectOnWorkspaceRemove.onEvent(new WorkspaceRemovedEvent(workspace));
 
-    verify(removeProjectOnWorkspaceRemove).doRemoveProject(WORKSPACE_ID);
+    verify(projectFactory).deleteIfManaged(workspace);
   }
 }

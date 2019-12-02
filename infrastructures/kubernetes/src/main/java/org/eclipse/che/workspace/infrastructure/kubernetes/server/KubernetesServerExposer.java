@@ -38,8 +38,9 @@ import org.eclipse.che.workspace.infrastructure.kubernetes.Annotations;
 import org.eclipse.che.workspace.infrastructure.kubernetes.Constants;
 import org.eclipse.che.workspace.infrastructure.kubernetes.environment.KubernetesEnvironment;
 import org.eclipse.che.workspace.infrastructure.kubernetes.environment.KubernetesEnvironment.PodData;
+import org.eclipse.che.workspace.infrastructure.kubernetes.provision.ConfigurationProvisioner;
 import org.eclipse.che.workspace.infrastructure.kubernetes.provision.UniqueNamesProvisioner;
-import org.eclipse.che.workspace.infrastructure.kubernetes.server.external.ExternalServerExposerStrategy;
+import org.eclipse.che.workspace.infrastructure.kubernetes.server.external.ExternalServerExposer;
 import org.eclipse.che.workspace.infrastructure.kubernetes.server.secure.SecureServerExposer;
 
 /**
@@ -103,7 +104,7 @@ public class KubernetesServerExposer<T extends KubernetesEnvironment> {
   public static final int SERVER_UNIQUE_PART_SIZE = 8;
   public static final String SERVER_PREFIX = "server";
 
-  private final ExternalServerExposerStrategy<T> externalServerExposer;
+  private final ExternalServerExposer<T> externalServerExposer;
   private final SecureServerExposer<T> secureServerExposer;
   private final String machineName;
   private final Container container;
@@ -111,7 +112,7 @@ public class KubernetesServerExposer<T extends KubernetesEnvironment> {
   private final T k8sEnv;
 
   public KubernetesServerExposer(
-      ExternalServerExposerStrategy<T> externalServerExposer,
+      ExternalServerExposer<T> externalServerExposer,
       SecureServerExposer<T> secureServerExposer,
       String machineName,
       PodData pod,
@@ -133,7 +134,7 @@ public class KubernetesServerExposer<T extends KubernetesEnvironment> {
    * UniqueNamesProvisioner}.
    *
    * @param servers servers to expose
-   * @see UniqueNamesProvisioner#provision(KubernetesEnvironment, RuntimeIdentity)
+   * @see ConfigurationProvisioner#provision(KubernetesEnvironment, RuntimeIdentity)
    */
   public void expose(Map<String, ? extends ServerConfig> servers) throws InfrastructureException {
     Map<String, ServerConfig> internalServers = new HashMap<>();

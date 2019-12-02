@@ -19,19 +19,22 @@ import org.eclipse.che.workspace.infrastructure.kubernetes.KubernetesEnvironment
 import org.eclipse.che.workspace.infrastructure.kubernetes.environment.KubernetesEnvironment;
 import org.eclipse.che.workspace.infrastructure.kubernetes.namespace.pvc.WorkspaceVolumesStrategy;
 import org.eclipse.che.workspace.infrastructure.kubernetes.provision.CertificateProvisioner;
+import org.eclipse.che.workspace.infrastructure.kubernetes.provision.GitConfigProvisioner;
 import org.eclipse.che.workspace.infrastructure.kubernetes.provision.ImagePullSecretProvisioner;
 import org.eclipse.che.workspace.infrastructure.kubernetes.provision.IngressTlsProvisioner;
-import org.eclipse.che.workspace.infrastructure.kubernetes.provision.InstallerServersPortProvisioner;
 import org.eclipse.che.workspace.infrastructure.kubernetes.provision.LogsVolumeMachineProvisioner;
 import org.eclipse.che.workspace.infrastructure.kubernetes.provision.PodTerminationGracePeriodProvisioner;
 import org.eclipse.che.workspace.infrastructure.kubernetes.provision.ProxySettingsProvisioner;
 import org.eclipse.che.workspace.infrastructure.kubernetes.provision.SecurityContextProvisioner;
 import org.eclipse.che.workspace.infrastructure.kubernetes.provision.ServiceAccountProvisioner;
 import org.eclipse.che.workspace.infrastructure.kubernetes.provision.UniqueNamesProvisioner;
+import org.eclipse.che.workspace.infrastructure.kubernetes.provision.VcsSshKeysProvisioner;
+import org.eclipse.che.workspace.infrastructure.kubernetes.provision.VcsSslCertificateProvisioner;
 import org.eclipse.che.workspace.infrastructure.kubernetes.provision.env.EnvVarsConverter;
 import org.eclipse.che.workspace.infrastructure.kubernetes.provision.limits.ram.RamLimitRequestProvisioner;
 import org.eclipse.che.workspace.infrastructure.kubernetes.provision.restartpolicy.RestartPolicyRewriter;
 import org.eclipse.che.workspace.infrastructure.kubernetes.provision.server.ServersConverter;
+import org.eclipse.che.workspace.infrastructure.kubernetes.server.PreviewUrlExposer;
 import org.mockito.InOrder;
 import org.mockito.Mock;
 import org.mockito.testng.MockitoTestNGListener;
@@ -48,7 +51,6 @@ import org.testng.annotations.Test;
 public class KubernetesEnvironmentProvisionerTest {
 
   @Mock private WorkspaceVolumesStrategy volumesStrategy;
-  @Mock private InstallerServersPortProvisioner installerServersPortProvisioner;
   @Mock private UniqueNamesProvisioner<KubernetesEnvironment> uniqueNamesProvisioner;
   @Mock private KubernetesEnvironment k8sEnv;
   @Mock private RuntimeIdentity runtimeIdentity;
@@ -64,6 +66,10 @@ public class KubernetesEnvironmentProvisionerTest {
   @Mock private ProxySettingsProvisioner proxySettingsProvisioner;
   @Mock private ServiceAccountProvisioner serviceAccountProvisioner;
   @Mock private CertificateProvisioner certificateProvisioner;
+  @Mock private VcsSshKeysProvisioner vcsSshKeysProvisioner;
+  @Mock private GitConfigProvisioner gitConfigProvisioner;
+  @Mock private PreviewUrlExposer previewUrlExposer;
+  @Mock private VcsSslCertificateProvisioner vcsSslCertificateProvisioner;
 
   private KubernetesEnvironmentProvisioner<KubernetesEnvironment> k8sInfraProvisioner;
 
@@ -80,7 +86,6 @@ public class KubernetesEnvironmentProvisionerTest {
             restartPolicyRewriter,
             volumesStrategy,
             ramLimitProvisioner,
-            installerServersPortProvisioner,
             logsVolumeMachineProvisioner,
             securityContextProvisioner,
             podTerminationGracePeriodProvisioner,
@@ -88,10 +93,13 @@ public class KubernetesEnvironmentProvisionerTest {
             imagePullSecretProvisioner,
             proxySettingsProvisioner,
             serviceAccountProvisioner,
-            certificateProvisioner);
+            certificateProvisioner,
+            vcsSshKeysProvisioner,
+            gitConfigProvisioner,
+            previewUrlExposer,
+            vcsSslCertificateProvisioner);
     provisionOrder =
         inOrder(
-            installerServersPortProvisioner,
             logsVolumeMachineProvisioner,
             volumesStrategy,
             uniqueNamesProvisioner,
@@ -105,16 +113,15 @@ public class KubernetesEnvironmentProvisionerTest {
             imagePullSecretProvisioner,
             proxySettingsProvisioner,
             serviceAccountProvisioner,
-            certificateProvisioner);
+            certificateProvisioner,
+            gitConfigProvisioner,
+            previewUrlExposer);
   }
 
   @Test
   public void performsOrderedProvisioning() throws Exception {
     k8sInfraProvisioner.provision(k8sEnv, runtimeIdentity);
 
-    provisionOrder
-        .verify(installerServersPortProvisioner)
-        .provision(eq(k8sEnv), eq(runtimeIdentity));
     provisionOrder.verify(logsVolumeMachineProvisioner).provision(eq(k8sEnv), eq(runtimeIdentity));
     provisionOrder.verify(serversProvisioner).provision(eq(k8sEnv), eq(runtimeIdentity));
     provisionOrder.verify(envVarsProvisioner).provision(eq(k8sEnv), eq(runtimeIdentity));
@@ -133,6 +140,7 @@ public class KubernetesEnvironmentProvisionerTest {
     provisionOrder.verify(proxySettingsProvisioner).provision(eq(k8sEnv), eq(runtimeIdentity));
     provisionOrder.verify(serviceAccountProvisioner).provision(eq(k8sEnv), eq(runtimeIdentity));
     provisionOrder.verify(certificateProvisioner).provision(eq(k8sEnv), eq(runtimeIdentity));
+    provisionOrder.verify(gitConfigProvisioner).provision(eq(k8sEnv), eq(runtimeIdentity));
     provisionOrder.verifyNoMoreInteractions();
   }
 }

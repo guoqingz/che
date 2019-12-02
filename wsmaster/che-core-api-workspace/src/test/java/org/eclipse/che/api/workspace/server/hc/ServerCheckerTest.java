@@ -12,11 +12,6 @@
 package org.eclipse.che.api.workspace.server.hc;
 
 import static java.lang.String.format;
-import static org.mockito.Mockito.atLeast;
-import static org.mockito.Mockito.spy;
-import static org.mockito.Mockito.timeout;
-import static org.mockito.Mockito.verify;
-import static org.mockito.Mockito.when;
 import static org.testng.Assert.assertEquals;
 import static org.testng.Assert.assertFalse;
 import static org.testng.Assert.assertTrue;
@@ -24,6 +19,7 @@ import static org.testng.Assert.fail;
 
 import java.util.Timer;
 import java.util.concurrent.CompletableFuture;
+import java.util.concurrent.CountDownLatch;
 import java.util.concurrent.ExecutionException;
 import java.util.concurrent.TimeUnit;
 import org.eclipse.che.api.workspace.server.spi.InfrastructureException;
@@ -36,7 +32,8 @@ public class ServerCheckerTest {
   private static final String MACHINE_NAME = "mach1";
   private static final String SERVER_REF = "ref1";
   private static final long PERIOD_MS = 10;
-  private static final long TIMEOUT_MS = 500;
+  private static final long CHECKER_TIMEOUT_MS = 5000;
+  private static final long TEST_TIMEOUT_MS = CHECKER_TIMEOUT_MS + 5000;
   private static final int SUCCESS_THRESHOLD = 1;
 
   private Timer timer;
@@ -45,16 +42,6 @@ public class ServerCheckerTest {
   @BeforeMethod
   public void setUp() throws Exception {
     timer = new Timer(true);
-    checker =
-        spy(
-            new TestServerChecker(
-                MACHINE_NAME,
-                SERVER_REF,
-                PERIOD_MS,
-                TIMEOUT_MS,
-                SUCCESS_THRESHOLD,
-                TimeUnit.MILLISECONDS,
-                timer));
   }
 
   @AfterMethod
@@ -62,42 +49,50 @@ public class ServerCheckerTest {
     timer.cancel();
   }
 
-  @Test(timeOut = TIMEOUT_MS)
+  @Test(timeOut = TEST_TIMEOUT_MS)
   public void successfulCheckTest() throws Exception {
+    checker =
+        new TestServerChecker(
+            MACHINE_NAME,
+            SERVER_REF,
+            PERIOD_MS,
+            CHECKER_TIMEOUT_MS,
+            SUCCESS_THRESHOLD,
+            TimeUnit.MILLISECONDS,
+            timer);
     CompletableFuture<String> reportCompFuture = checker.getReportCompFuture();
     // not considered as available before start
     assertFalse(reportCompFuture.isDone());
     // ensure server not available before start
-    when(checker.isAvailable()).thenReturn(false);
+    CountDownLatch isAvailableCountDownLatch = checker.setAvailable(false);
 
     checker.start();
 
-    verify(checker, timeout((int) (PERIOD_MS * 2)).atLeastOnce()).isAvailable();
+    isAvailableCountDownLatch.await(PERIOD_MS * 2, TimeUnit.MILLISECONDS);
     // not considered as available after check
     assertFalse(reportCompFuture.isDone());
 
     // make server available
-    when(checker.isAvailable()).thenReturn(true);
+    isAvailableCountDownLatch = checker.setAvailable(true);
 
     assertEquals(reportCompFuture.get(), SERVER_REF);
-    verify(checker, atLeast(2)).isAvailable();
+    isAvailableCountDownLatch.await(PERIOD_MS * 2, TimeUnit.MILLISECONDS);
   }
 
-  @Test(timeOut = TIMEOUT_MS)
+  @Test(timeOut = TEST_TIMEOUT_MS)
   public void checkTimeoutTest() throws Exception {
     checker =
-        spy(
-            new TestServerChecker(
-                MACHINE_NAME,
-                SERVER_REF,
-                PERIOD_MS,
-                PERIOD_MS * 2,
-                SUCCESS_THRESHOLD,
-                TimeUnit.MILLISECONDS,
-                timer));
+        new TestServerChecker(
+            MACHINE_NAME,
+            SERVER_REF,
+            PERIOD_MS,
+            PERIOD_MS * 2,
+            SUCCESS_THRESHOLD,
+            TimeUnit.MILLISECONDS,
+            timer);
 
     // ensure server not available before start
-    when(checker.isAvailable()).thenReturn(false);
+    checker.setAvailable(false);
     checker.start();
 
     CompletableFuture<String> reportCompFuture = checker.getReportCompFuture();
@@ -108,7 +103,7 @@ public class ServerCheckerTest {
       assertTrue(e.getCause() instanceof InfrastructureException);
       assertEquals(
           e.getCause().getMessage(),
-          format("Server '%s' in machine '%s' not available.", SERVER_REF, MACHINE_NAME));
+          format("Server '%s' in container '%s' not available.", SERVER_REF, MACHINE_NAME));
     }
   }
 
@@ -118,6 +113,11 @@ public class ServerCheckerTest {
   }
 
   private static class TestServerChecker extends ServerChecker {
+
+    private boolean isAvailable;
+
+    private CountDownLatch isAvailableCountDownLatch = new CountDownLatch(1);
+
     protected TestServerChecker(
         String machineName,
         String serverRef,
@@ -131,7 +131,14 @@ public class ServerCheckerTest {
 
     @Override
     public boolean isAvailable() {
-      return false;
+      isAvailableCountDownLatch.countDown();
+      return isAvailable;
+    }
+
+    public CountDownLatch setAvailable(boolean isAvailable) {
+      this.isAvailable = isAvailable;
+      this.isAvailableCountDownLatch = new CountDownLatch(1);
+      return isAvailableCountDownLatch;
     }
   }
 }

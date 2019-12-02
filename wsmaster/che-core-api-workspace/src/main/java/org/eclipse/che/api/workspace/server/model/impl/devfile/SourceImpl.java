@@ -12,28 +12,52 @@
 package org.eclipse.che.api.workspace.server.model.impl.devfile;
 
 import java.util.Objects;
+import javax.persistence.Column;
+import javax.persistence.Embeddable;
 import org.eclipse.che.api.core.model.workspace.devfile.Source;
 
 /** @author Sergii Leshchenko */
+@Embeddable
 public class SourceImpl implements Source {
 
+  @Column(name = "type", nullable = false)
   private String type;
+
+  @Column(name = "location", nullable = false)
   private String location;
+
+  @Column(name = "branch")
   private String branch;
+
+  @Column(name = "start_point")
   private String startPoint;
+
+  @Column(name = "tag")
   private String tag;
+
+  @Column(name = "commit_id")
   private String commitId;
+
+  @Column(name = "sparse_checkout_dir")
+  private String sparseCheckoutDir;
 
   public SourceImpl() {}
 
   public SourceImpl(
-      String type, String location, String branch, String startPoint, String tag, String commitId) {
+      String type,
+      String location,
+      String branch,
+      String startPoint,
+      String tag,
+      String commitId,
+      String sparseCheckoutDir) {
     this.type = type;
     this.location = location;
     this.branch = branch;
     this.startPoint = startPoint;
     this.tag = tag;
     this.commitId = commitId;
+    this.sparseCheckoutDir = sparseCheckoutDir;
   }
 
   public SourceImpl(Source source) {
@@ -43,7 +67,8 @@ public class SourceImpl implements Source {
         source.getBranch(),
         source.getStartPoint(),
         source.getTag(),
-        source.getCommitId());
+        source.getCommitId(),
+        source.getSparseCheckoutDir());
   }
 
   @Override
@@ -101,6 +126,15 @@ public class SourceImpl implements Source {
   }
 
   @Override
+  public String getSparseCheckoutDir() {
+    return sparseCheckoutDir;
+  }
+
+  public void setSparseCheckoutDir(String sparseCheckoutDir) {
+    this.sparseCheckoutDir = sparseCheckoutDir;
+  }
+
+  @Override
   public boolean equals(Object o) {
     if (this == o) {
       return true;
@@ -109,18 +143,18 @@ public class SourceImpl implements Source {
       return false;
     }
     SourceImpl source = (SourceImpl) o;
-    return Objects.equals(getType(), source.getType())
-        && Objects.equals(getLocation(), source.getLocation())
-        && Objects.equals(getBranch(), source.getBranch())
-        && Objects.equals(getStartPoint(), source.getStartPoint())
-        && Objects.equals(getTag(), source.getTag())
-        && Objects.equals(getCommitId(), source.getCommitId());
+    return Objects.equals(type, source.type)
+        && Objects.equals(location, source.location)
+        && Objects.equals(branch, source.branch)
+        && Objects.equals(startPoint, source.startPoint)
+        && Objects.equals(tag, source.tag)
+        && Objects.equals(commitId, source.commitId)
+        && Objects.equals(sparseCheckoutDir, source.sparseCheckoutDir);
   }
 
   @Override
   public int hashCode() {
-    return Objects.hash(
-        getType(), getLocation(), getBranch(), getStartPoint(), getTag(), getCommitId());
+    return Objects.hash(type, location, branch, startPoint, tag, commitId, sparseCheckoutDir);
   }
 
   @Override
@@ -143,6 +177,9 @@ public class SourceImpl implements Source {
         + '\''
         + ", commitId='"
         + commitId
+        + '\''
+        + ", sparseCheckoutDir='"
+        + sparseCheckoutDir
         + '\''
         + '}';
   }

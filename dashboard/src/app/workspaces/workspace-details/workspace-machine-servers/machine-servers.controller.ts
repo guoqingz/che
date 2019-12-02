@@ -54,7 +54,6 @@ export class MachineServersController {
     this.$mdDialog = $mdDialog;
     this.confirmDialogService = confirmDialogService;
 
-    this.buildServersList(this.selectedMachine);
     const deRegistrationFn = $scope.$watch(() => {
       return this.selectedMachine;
     }, (selectedMachine: IEnvironmentManagerMachine) => {
@@ -64,6 +63,10 @@ export class MachineServersController {
     $scope.$on('$destroy', () => {
       deRegistrationFn();
     });
+  }
+
+  $onInit(): void {
+    this.buildServersList(this.selectedMachine);
   }
 
   /**
@@ -201,7 +204,7 @@ export class MachineServersController {
    * @param reference {string}
    */
   deleteServer(reference: string): void {
-    const promise = this.confirmDialogService.showConfirmDialog('Remove server', 'Would you like to delete this server?', 'Delete');
+    const promise = this.confirmDialogService.showConfirmDialog('Remove server', 'Would you like to delete this server?', { resolve: 'Delete' });
     promise.then(() => {
       delete this.servers[reference];
       this.environmentManager.setServers(this.selectedMachine, this.servers);
@@ -222,6 +225,6 @@ export class MachineServersController {
       content += 'this selected server?';
     }
 
-    return this.confirmDialogService.showConfirmDialog('Remove servers', content, 'Delete');
+    return this.confirmDialogService.showConfirmDialog('Remove servers', content, { resolve: 'Delete' });
   }
 }

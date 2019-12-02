@@ -161,6 +161,11 @@ export class OrganizationDetailsController {
     });
   }
 
+  $onInit(): void {
+    // this method won't be called here
+    // place all initialization code in constructor
+  }
+
   get SET_PERMISSIONS(): string {
     return this.organizationActions.SET_PERMISSIONS;
   }
@@ -219,7 +224,8 @@ export class OrganizationDetailsController {
    * @param {string} tab
    */
   updateSelectedTab(tab: string): void {
-    this.selectedTabIndex = parseInt(this.tab[tab], 10);
+    const tabIndex = parseInt(this.tab[tab], 10);
+    this.selectedTabIndex = isNaN(tabIndex) ? 0 : tabIndex;
   }
 
   /**
@@ -228,7 +234,7 @@ export class OrganizationDetailsController {
    * @param {number} tabIndex
    */
   onSelectTab(tabIndex?: number): void {
-    let param: { tab?: string } = {};
+    const param: { tab?: string } = {};
     if (angular.isDefined(tabIndex)) {
       param.tab = Tab[tabIndex];
     }
@@ -400,7 +406,7 @@ export class OrganizationDetailsController {
    */
   deleteOrganization(): void {
     let promise = this.confirmDialogService.showConfirmDialog('Delete organization',
-      'Would you like to delete organization \'' + this.organization.name + '\'?', 'Delete');
+      'Would you like to delete organization \'' + this.organization.name + '\'?', { resolve: 'Delete' });
 
     promise.then(() => {
       let promise = this.cheOrganization.deleteOrganization(this.organization.id);

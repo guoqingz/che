@@ -11,6 +11,8 @@
  */
 package org.eclipse.che.api.workspace.server;
 
+import static com.google.common.base.Preconditions.checkArgument;
+import static com.google.common.base.Strings.isNullOrEmpty;
 import static java.lang.String.format;
 import static java.lang.System.currentTimeMillis;
 import static java.util.Objects.requireNonNull;
@@ -22,6 +24,8 @@ import static org.eclipse.che.api.workspace.shared.Constants.ERROR_MESSAGE_ATTRI
 import static org.eclipse.che.api.workspace.shared.Constants.STOPPED_ABNORMALLY_ATTRIBUTE_NAME;
 import static org.eclipse.che.api.workspace.shared.Constants.STOPPED_ATTRIBUTE_NAME;
 import static org.eclipse.che.api.workspace.shared.Constants.UPDATED_ATTRIBUTE_NAME;
+import static org.eclipse.che.api.workspace.shared.Constants.WORKSPACE_GENERATE_NAME_CHARS_APPEND;
+import static org.eclipse.che.api.workspace.shared.Constants.WORKSPACE_INFRASTRUCTURE_NAMESPACE_ATTRIBUTE;
 
 import com.google.inject.Inject;
 import java.util.Collections;
@@ -39,15 +43,24 @@ import org.eclipse.che.api.core.ValidationException;
 import org.eclipse.che.api.core.model.workspace.Workspace;
 import org.eclipse.che.api.core.model.workspace.WorkspaceConfig;
 import org.eclipse.che.api.core.model.workspace.WorkspaceStatus;
+import org.eclipse.che.api.core.model.workspace.devfile.Devfile;
 import org.eclipse.che.api.core.notification.EventService;
+import org.eclipse.che.api.workspace.server.devfile.FileContentProvider;
+import org.eclipse.che.api.workspace.server.devfile.exception.DevfileFormatException;
+import org.eclipse.che.api.workspace.server.devfile.validator.DevfileIntegrityValidator;
 import org.eclipse.che.api.workspace.server.model.impl.WorkspaceConfigImpl;
 import org.eclipse.che.api.workspace.server.model.impl.WorkspaceImpl;
+import org.eclipse.che.api.workspace.server.model.impl.devfile.DevfileImpl;
+import org.eclipse.che.api.workspace.server.model.impl.devfile.MetadataImpl;
 import org.eclipse.che.api.workspace.server.spi.InfrastructureException;
+import org.eclipse.che.api.workspace.server.spi.NamespaceResolutionContext;
 import org.eclipse.che.api.workspace.server.spi.WorkspaceDao;
+import org.eclipse.che.api.workspace.shared.Constants;
 import org.eclipse.che.api.workspace.shared.event.WorkspaceCreatedEvent;
 import org.eclipse.che.commons.annotation.Nullable;
 import org.eclipse.che.commons.annotation.Traced;
 import org.eclipse.che.commons.env.EnvironmentContext;
+import org.eclipse.che.commons.lang.NameGenerator;
 import org.eclipse.che.commons.subject.Subject;
 import org.eclipse.che.commons.tracing.TracingTags;
 import org.slf4j.Logger;
@@ -71,6 +84,7 @@ public class WorkspaceManager {
   private final AccountManager accountManager;
   private final EventService eventService;
   private final WorkspaceValidator validator;
+  private final DevfileIntegrityValidator devfileIntegrityValidator;
 
   @Inject
   public WorkspaceManager(
@@ -78,12 +92,14 @@ public class WorkspaceManager {
       WorkspaceRuntimes runtimes,
       EventService eventService,
       AccountManager accountManager,
-      WorkspaceValidator validator) {
+      WorkspaceValidator validator,
+      DevfileIntegrityValidator devfileIntegrityValidator) {
     this.workspaceDao = workspaceDao;
     this.runtimes = runtimes;
     this.accountManager = accountManager;
     this.eventService = eventService;
     this.validator = validator;
+    this.devfileIntegrityValidator = devfileIntegrityValidator;
   }
 
   /**
@@ -103,18 +119,60 @@ public class WorkspaceManager {
    */
   @Traced
   public WorkspaceImpl createWorkspace(
-      WorkspaceConfig config, String namespace, @Nullable Map<String, String> attributes)
+      WorkspaceConfig config, String namespace, Map<String, String> attributes)
       throws ServerException, NotFoundException, ConflictException, ValidationException {
-    TracingTags.STACK_ID.set(() -> attributes.getOrDefault("stackId", "no stack"));
-
     requireNonNull(config, "Required non-null config");
     requireNonNull(namespace, "Required non-null namespace");
     validator.validateConfig(config);
-    if (attributes != null) {
-      validator.validateAttributes(attributes);
-    }
+    validator.validateAttributes(attributes);
+
     WorkspaceImpl workspace =
         doCreateWorkspace(config, accountManager.getByName(namespace), attributes, false);
+    TracingTags.WORKSPACE_ID.set(workspace.getId());
+    return workspace;
+  }
+
+  /**
+   * Creates a workspace out of a devfile.
+   *
+   * <p>The devfile should have been validated using the {@link
+   * DevfileIntegrityValidator#validateDevfile(Devfile)}. This method does rest of the validation
+   * and actually creates the workspace.
+   *
+   * @param devfile the devfile describing the workspace
+   * @param namespace workspace name is unique in this namespace
+   * @param attributes workspace instance attributes
+   * @param contentProvider the content provider to use for resolving content references in the
+   *     devfile
+   * @return new workspace instance
+   * @throws NullPointerException when either {@code config} or {@code namespace} is null
+   * @throws NotFoundException when account with given id was not found
+   * @throws ConflictException when any conflict occurs (e.g Workspace with such name already exists
+   *     for {@code owner})
+   * @throws ServerException when any other error occurs
+   * @throws ValidationException when incoming configuration or attributes are not valid
+   */
+  @Traced
+  public WorkspaceImpl createWorkspace(
+      Devfile devfile,
+      String namespace,
+      Map<String, String> attributes,
+      FileContentProvider contentProvider)
+      throws ServerException, NotFoundException, ConflictException, ValidationException {
+    requireNonNull(devfile, "Required non-null devfile");
+    requireNonNull(namespace, "Required non-null namespace");
+    validator.validateAttributes(attributes);
+
+    devfile = generateNameIfNeeded(devfile);
+
+    try {
+      devfileIntegrityValidator.validateContentReferences(devfile, contentProvider);
+    } catch (DevfileFormatException e) {
+      throw new ValidationException(e.getMessage(), e);
+    }
+
+    WorkspaceImpl workspace =
+        doCreateWorkspace(devfile, accountManager.getByName(namespace), attributes, false);
     TracingTags.WORKSPACE_ID.set(workspace.getId());
     return workspace;
   }
@@ -243,13 +301,25 @@ public class WorkspaceManager {
       throws ConflictException, ServerException, NotFoundException, ValidationException {
     requireNonNull(id, "Required non-null workspace id");
     requireNonNull(update, "Required non-null workspace update");
-    requireNonNull(update.getConfig(), "Required non-null workspace configuration update");
-    validator.validateConfig(update.getConfig());
-    validator.validateAttributes(update.getAttributes());
-
+    checkArgument(
+        update.getConfig() != null ^ update.getDevfile() != null,
+        "Required non-null workspace configuration or devfile update but not both");
+    if (update.getConfig() != null) {
+      validator.validateConfig(update.getConfig());
+    }
     WorkspaceImpl workspace = workspaceDao.get(id);
-    workspace.setConfig(new WorkspaceConfigImpl(update.getConfig()));
+
+    validator.validateUpdateAttributes(workspace.getAttributes(), update.getAttributes());
+
+    if (workspace.getConfig() != null) {
+      workspace.setConfig(new WorkspaceConfigImpl(update.getConfig()));
+    }
+    if (workspace.getDevfile() != null) {
+      workspace.setDevfile(new DevfileImpl(update.getDevfile()));
+    }
+
     workspace.setAttributes(update.getAttributes());
+
     workspace.getAttributes().put(UPDATED_ATTRIBUTE_NAME, Long.toString(currentTimeMillis()));
     workspace.setTemporary(update.isTemporary());
 
@@ -280,10 +350,6 @@ public class WorkspaceManager {
     }
 
     Optional<WorkspaceImpl> workspaceOpt = workspaceDao.remove(workspaceId);
-    workspaceOpt.ifPresent(
-        workspace ->
-            TracingTags.STACK_ID.set(
-                workspace.getAttributes().getOrDefault("stackId", "no stack")));
 
     LOG.info("Workspace '{}' removed by user '{}'", workspaceId, sessionUserNameOrUndefined());
   }
@@ -356,7 +422,7 @@ public class WorkspaceManager {
         .whenComplete(
             (aVoid, throwable) -> {
               if (workspace.isTemporary()) {
-                removeWorkspaceQuietly(workspace);
+                removeWorkspaceQuietly(workspace.getId());
               }
             });
   }
@@ -370,55 +436,49 @@ public class WorkspaceManager {
   private void startAsync(
       WorkspaceImpl workspace, @Nullable String envName, Map<String, String> options)
       throws ConflictException, NotFoundException, ServerException {
-    String env = getValidatedEnvironmentName(workspace, envName);
+
+    try {
+      runtimes.validate(workspace, envName);
+    } catch (ValidationException e) {
+      throw new ConflictException(e.getMessage(), e);
+    }
+
+    // handle the situation where a workspace created by a previous Che version doesn't have a
+    // namespace stored for it. We use the legacy-aware method to figure out the namespace to
+    // correctly capture the workspaces which have PVCs already in a namespace defined by the legacy
+    // configuration variable.
+    if (isNullOrEmpty(
+        workspace.getAttributes().get(WORKSPACE_INFRASTRUCTURE_NAMESPACE_ATTRIBUTE))) {
+      try {
+        String namespace =
+            runtimes.evalLegacyInfrastructureNamespace(buildResolutionContext(workspace));
+        workspace.getAttributes().put(WORKSPACE_INFRASTRUCTURE_NAMESPACE_ATTRIBUTE, namespace);
+      } catch (InfrastructureException e) {
+        throw new ServerException(e);
+      }
+    }
+
     workspace.getAttributes().put(UPDATED_ATTRIBUTE_NAME, Long.toString(currentTimeMillis()));
     workspaceDao.update(workspace);
+
     runtimes
-        .startAsync(workspace, env, firstNonNull(options, Collections.emptyMap()))
-        .thenAccept(aVoid -> handleStartupSuccess(workspace))
+        .startAsync(workspace, envName, firstNonNull(options, Collections.emptyMap()))
+        .thenAccept(aVoid -> handleStartupSuccess(workspace.getId()))
         .exceptionally(
             ex -> {
               if (workspace.isTemporary()) {
-                removeWorkspaceQuietly(workspace);
+                removeWorkspaceQuietly(workspace.getId());
               } else {
-                handleStartupError(workspace, ex.getCause());
+                handleStartupError(workspace.getId(), ex.getCause());
               }
               return null;
             });
   }
 
-  private String getValidatedEnvironmentName(WorkspaceImpl workspace, @Nullable String envName)
-      throws NotFoundException, ServerException {
-    if (envName != null && !workspace.getConfig().getEnvironments().containsKey(envName)) {
-      throw new NotFoundException(
-          format(
-              "Workspace '%s:%s' doesn't contain environment '%s'",
-              workspace.getNamespace(), workspace.getConfig().getName(), envName));
-    }
-
-    envName = firstNonNull(envName, workspace.getConfig().getDefaultEnv());
-
-    if (envName == null
-        && SidecarToolingWorkspaceUtil.isSidecarBasedWorkspace(
-            workspace.getConfig().getAttributes())) {
-      // Sidecar-based workspaces are allowed not to have any environments
-      return null;
-    }
-
-    // validate environment in advance
-    if (envName == null) {
-      throw new NotFoundException(
-          format(
-              "Workspace %s:%s can't use null environment",
-              workspace.getNamespace(), workspace.getConfig().getName()));
-    }
-    try {
-      runtimes.validate(workspace.getConfig().getEnvironments().get(envName));
-    } catch (InfrastructureException | ValidationException e) {
-      throw new ServerException(e);
-    }
-
-    return envName;
+  private NamespaceResolutionContext buildResolutionContext(WorkspaceImpl workspace) {
+    Subject currentSubject = EnvironmentContext.getCurrent().getSubject();
+    return new NamespaceResolutionContext(
+        workspace.getId(), currentSubject.getUserId(), currentSubject.getUserName());
   }
 
   /** Returns first non-null argument or null if both are null. */
@@ -431,15 +491,18 @@ public class WorkspaceManager {
       throw new ConflictException(
           format(
               "Could not stop the workspace '%s/%s' because its status is '%s'.",
-              workspace.getNamespace(), workspace.getConfig().getName(), workspace.getStatus()));
+              workspace.getNamespace(), workspace.getName(), workspace.getStatus()));
     }
   }
 
-  private void removeWorkspaceQuietly(Workspace workspace) {
+  private void removeWorkspaceQuietly(String workspaceId) {
     try {
-      workspaceDao.remove(workspace.getId());
+      workspaceDao.remove(workspaceId);
     } catch (ServerException x) {
-      LOG.error("Unable to remove temporary workspace '{}'", workspace.getId());
+      LOG.error(
+          "Unable to remove temporary workspace '{}'. Error message was: {}",
+          workspaceId,
+          x.getMessage());
     }
   }
 
@@ -461,61 +524,114 @@ public class WorkspaceManager {
     return workspace;
   }
 
-  private void handleStartupError(Workspace workspace, Throwable t) {
-    workspace
-        .getAttributes()
-        .put(
-            ERROR_MESSAGE_ATTRIBUTE_NAME,
-            t instanceof RuntimeException ? t.getCause().getMessage() : t.getMessage());
-    workspace.getAttributes().put(STOPPED_ATTRIBUTE_NAME, Long.toString(currentTimeMillis()));
-    workspace.getAttributes().put(STOPPED_ABNORMALLY_ATTRIBUTE_NAME, Boolean.toString(true));
+  private void handleStartupError(String workspaceId, Throwable t) {
     try {
-      updateWorkspace(workspace.getId(), workspace);
-    } catch (NotFoundException | ServerException | ValidationException | ConflictException e) {
+      // we need to reload the workspace because the runtimes might have updated it
+      WorkspaceImpl workspace = getWorkspace(workspaceId);
+      workspace
+          .getAttributes()
+          .put(
+              ERROR_MESSAGE_ATTRIBUTE_NAME,
+              t instanceof RuntimeException ? t.getCause().getMessage() : t.getMessage());
+      workspace.getAttributes().put(STOPPED_ATTRIBUTE_NAME, Long.toString(currentTimeMillis()));
+      workspace.getAttributes().put(STOPPED_ABNORMALLY_ATTRIBUTE_NAME, Boolean.toString(true));
+      workspaceDao.update(workspace);
+    } catch (NotFoundException | ServerException | ConflictException e) {
       LOG.warn(
           String.format(
               "Cannot set error status of the workspace %s. Error is: %s",
-              workspace.getId(), e.getMessage()));
+              workspaceId, e.getMessage()));
     }
   }
 
-  private void handleStartupSuccess(Workspace workspace) {
-    workspace.getAttributes().remove(STOPPED_ATTRIBUTE_NAME);
-    workspace.getAttributes().remove(STOPPED_ABNORMALLY_ATTRIBUTE_NAME);
-    workspace.getAttributes().remove(ERROR_MESSAGE_ATTRIBUTE_NAME);
+  private void handleStartupSuccess(String workspaceId) {
     try {
-      updateWorkspace(workspace.getId(), workspace);
-    } catch (NotFoundException | ServerException | ValidationException | ConflictException e) {
+      // we need to reload the workspace because the runtimes might have updated it
+      WorkspaceImpl workspace = getWorkspace(workspaceId);
+
+      workspace.getAttributes().remove(STOPPED_ATTRIBUTE_NAME);
+      workspace.getAttributes().remove(STOPPED_ABNORMALLY_ATTRIBUTE_NAME);
+      workspace.getAttributes().remove(ERROR_MESSAGE_ATTRIBUTE_NAME);
+
+      workspaceDao.update(workspace);
+    } catch (NotFoundException | ServerException | ConflictException e) {
       LOG.warn(
           String.format(
               "Cannot clear error status status of the workspace %s. Error is: %s",
-              workspace.getId(), e.getMessage()));
+              workspaceId, e.getMessage()));
     }
   }
 
   private WorkspaceImpl doCreateWorkspace(
       WorkspaceConfig config, Account account, Map<String, String> attributes, boolean isTemporary)
-      throws NotFoundException, ServerException, ConflictException {
+      throws ConflictException, ServerException {
+    return doCreateWorkspace(config, null, account, attributes, isTemporary);
+  }
+
+  private WorkspaceImpl doCreateWorkspace(
+      Devfile devfile, Account account, Map<String, String> attributes, boolean isTemporary)
+      throws ConflictException, ServerException {
+    return doCreateWorkspace(null, devfile, account, attributes, isTemporary);
+  }
+
+  private WorkspaceImpl doCreateWorkspace(
+      WorkspaceConfig config,
+      Devfile devfile,
+      Account account,
+      Map<String, String> attributes,
+      boolean isTemporary)
+      throws ConflictException, ServerException {
     WorkspaceImpl workspace =
         WorkspaceImpl.builder()
             .generateId()
-            .setConfig(config)
             .setAccount(account)
+            .setConfig(config)
+            .setDevfile(devfile)
             .setAttributes(attributes)
             .setTemporary(isTemporary)
             .setStatus(STOPPED)
             .build();
     workspace.getAttributes().put(CREATED_ATTRIBUTE_NAME, Long.toString(currentTimeMillis()));
 
+    if (isNullOrEmpty(
+        workspace.getAttributes().get(WORKSPACE_INFRASTRUCTURE_NAMESPACE_ATTRIBUTE))) {
+      try {
+        String namespace = runtimes.evalInfrastructureNamespace(buildResolutionContext(workspace));
+        workspace.getAttributes().put(WORKSPACE_INFRASTRUCTURE_NAMESPACE_ATTRIBUTE, namespace);
+      } catch (InfrastructureException e) {
+        throw new ServerException(e);
+      }
+    }
+
     workspaceDao.create(workspace);
     LOG.info(
         "Workspace '{}/{}' with id '{}' created by user '{}'",
         account.getName(),
-        workspace.getConfig().getName(),
+        workspace.getName(),
         workspace.getId(),
         sessionUserNameOrUndefined());
     eventService.publish(new WorkspaceCreatedEvent(workspace));
     return workspace;
+  }
+
+  /**
+   * If 'generateName' is defined and 'name' is not, we generate name using 'generateName' as a
+   * prefix following {@link Constants#WORKSPACE_GENERATE_NAME_CHARS_APPEND} random characters and
+   * set it to 'name'.
+   */
+  private Devfile generateNameIfNeeded(Devfile origDevfile) {
+    if (origDevfile.getMetadata() != null) {
+      MetadataImpl metadata = new MetadataImpl(origDevfile.getMetadata());
+      if (metadata.getName() == null && metadata.getGenerateName() != null) {
+        metadata.setName(
+            NameGenerator.generate(
+                metadata.getGenerateName(), WORKSPACE_GENERATE_NAME_CHARS_APPEND));
+        DevfileImpl devfileWithGeneratedName = new DevfileImpl(origDevfile);
+        devfileWithGeneratedName.setMetadata(metadata);
+        return devfileWithGeneratedName;
+      }
+    }
+    return origDevfile;
   }
 
   private WorkspaceImpl getByKey(String key) throws NotFoundException, ServerException {

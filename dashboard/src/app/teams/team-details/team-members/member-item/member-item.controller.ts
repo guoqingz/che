@@ -66,12 +66,14 @@ export class MemberItemController {
     this.otherActions = [];
   }
 
+  $onInit(): void { }
+
   /**
    * Call user permissions removal. Show the dialog
    * @param  event - the $event
    */
   removeMember(event: MouseEvent): void {
-    let promise = this.confirmDialogService.showConfirmDialog('Remove member', 'Would you like to remove member  ' + this.member.email + ' ?', 'Delete');
+    let promise = this.confirmDialogService.showConfirmDialog('Remove member', 'Would you like to remove member  ' + this.member.email + ' ?', { resolve: 'Delete' });
 
     promise.then(() => {
       if (this.member.isPending) {

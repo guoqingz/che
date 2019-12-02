@@ -100,6 +100,11 @@ export class AdminsUserManagementCtrl {
     this.pagesInfo = this.cheUser.getPagesInfo();
   }
 
+  $onInit(): void {
+    // this method won't be called here
+    // place all initialization code in constructor
+  }
+
   /**
    * Callback when name is changed.
    *
@@ -139,7 +144,7 @@ export class AdminsUserManagementCtrl {
    */
   removeUser(event: MouseEvent, user: any): void {
     let content = 'Are you sure you want to remove \'' + user.email + '\'?';
-    let promise = this.confirmDialogService.showConfirmDialog('Remove user', content, 'Delete', 'Cancel');
+    let promise = this.confirmDialogService.showConfirmDialog('Remove user', content, { resolve: 'Delete', reject: 'Cancel' });
 
     promise.then(() => {
       this.isLoading = true;
@@ -226,7 +231,7 @@ export class AdminsUserManagementCtrl {
       content += 'user?';
     }
 
-    return this.confirmDialogService.showConfirmDialog('Remove users', content, 'Delete', 'Cancel');
+    return this.confirmDialogService.showConfirmDialog('Remove users', content, { resolve: 'Delete', reject: 'Cancel' });
   }
 
   /**

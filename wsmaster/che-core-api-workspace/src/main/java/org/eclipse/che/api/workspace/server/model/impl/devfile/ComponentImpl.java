@@ -13,53 +13,143 @@ package org.eclipse.che.api.workspace.server.model.impl.devfile;
 
 import static java.util.stream.Collectors.toCollection;
 
+import com.fasterxml.jackson.databind.annotation.JsonDeserialize;
+import java.io.Serializable;
 import java.util.ArrayList;
 import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.Objects;
+import javax.persistence.CascadeType;
+import javax.persistence.CollectionTable;
+import javax.persistence.Column;
+import javax.persistence.Convert;
+import javax.persistence.ElementCollection;
+import javax.persistence.Entity;
+import javax.persistence.FetchType;
+import javax.persistence.GeneratedValue;
+import javax.persistence.Id;
+import javax.persistence.JoinColumn;
+import javax.persistence.MapKeyColumn;
+import javax.persistence.OneToMany;
+import javax.persistence.Table;
 import org.eclipse.che.api.core.model.workspace.devfile.Component;
 import org.eclipse.che.api.core.model.workspace.devfile.Endpoint;
 import org.eclipse.che.api.core.model.workspace.devfile.Entrypoint;
 import org.eclipse.che.api.core.model.workspace.devfile.Env;
 import org.eclipse.che.api.core.model.workspace.devfile.Volume;
+import org.eclipse.che.api.workspace.server.devfile.PreferencesDeserializer;
+import org.eclipse.che.api.workspace.server.devfile.SerializableConverter;
 
 /** @author Sergii Leshchenko */
+@Entity(name = "DevfileComponent")
+@Table(name = "devfile_component")
 public class ComponentImpl implements Component {
 
-  private String name;
+  @Id
+  @GeneratedValue
+  @Column(name = "id")
+  private Long generatedId;
+
+  @Column(name = "component_id", nullable = false)
+  private String componentId;
+
+  @ElementCollection(fetch = FetchType.EAGER)
+  @CollectionTable(
+      name = "devfile_component_preferences",
+      joinColumns = @JoinColumn(name = "devfile_component_id"))
+  @MapKeyColumn(name = "preference_key")
+  @Convert(converter = SerializableConverter.class)
+  @Column(name = "preference")
+  @JsonDeserialize(using = PreferencesDeserializer.class)
+  private Map<String, Serializable> preferences;
+
+  @Column(name = "alias")
+  private String alias;
+
+  @Column(name = "type", nullable = false)
   private String type;
-  private String id;
+
+  @Column(name = "registry_url")
+  private String registryUrl;
+
+  @Column(name = "reference")
   private String reference;
+
+  @Column(name = "reference_content")
   private String referenceContent;
+
+  @ElementCollection(fetch = FetchType.EAGER)
+  @CollectionTable(
+      name = "devfile_component_selector",
+      joinColumns = @JoinColumn(name = "devfile_component_id"))
+  @MapKeyColumn(name = "selector_key")
+  @Column(name = "selector")
   private Map<String, String> selector;
-  private List<EntrypointImpl> entrypoints;
+
+  @Column(name = "image")
   private String image;
+
+  @Column(name = "memory_limit")
   private String memoryLimit;
-  private boolean mountSources;
+
+  @Column(name = "mount_sources")
+  private Boolean mountSources;
+
+  @ElementCollection(fetch = FetchType.EAGER)
+  @CollectionTable(
+      name = "devfile_component_command",
+      joinColumns = @JoinColumn(name = "devfile_component_id"))
+  @Column(name = "command")
   private List<String> command;
+
+  @ElementCollection(fetch = FetchType.EAGER)
+  @CollectionTable(
+      name = "devfile_component_arg",
+      joinColumns = @JoinColumn(name = "devfile_component_id"))
+  @Column(name = "args")
   private List<String> args;
+
+  @OneToMany(cascade = CascadeType.ALL, orphanRemoval = true, fetch = FetchType.EAGER)
+  @JoinColumn(name = "devfile_component_id")
+  private List<EntrypointImpl> entrypoints;
+
+  @OneToMany(cascade = CascadeType.ALL, orphanRemoval = true, fetch = FetchType.EAGER)
+  @JoinColumn(name = "devfile_component_id")
   private List<VolumeImpl> volumes;
+
+  @OneToMany(cascade = CascadeType.ALL, orphanRemoval = true, fetch = FetchType.EAGER)
+  @JoinColumn(name = "devfile_component_id")
   private List<EnvImpl> env;
+
+  @OneToMany(cascade = CascadeType.ALL, orphanRemoval = true, fetch = FetchType.EAGER)
+  @JoinColumn(name = "devfile_component_id")
   private List<EndpointImpl> endpoints;
 
   public ComponentImpl() {}
 
-  public ComponentImpl(String type, String name, String id) {
-    this.name = name;
+  public ComponentImpl(String type, String id) {
     this.type = type;
-    this.id = id;
+    this.componentId = id;
+  }
+
+  public ComponentImpl(String type, String id, Map<String, String> preferences) {
+    this.type = type;
+    this.componentId = id;
+    if (preferences != null) {
+      this.preferences = new HashMap<>(preferences);
+    }
   }
 
   public ComponentImpl(
       String type,
-      String name,
+      String id,
       String reference,
       String referenceContent,
       Map<String, String> selector,
       List<? extends Entrypoint> entrypoints) {
-    this.name = name;
     this.type = type;
+    this.componentId = id;
     this.reference = reference;
     this.referenceContent = referenceContent;
     if (selector != null) {
@@ -73,17 +163,19 @@ public class ComponentImpl implements Component {
 
   public ComponentImpl(
       String type,
-      String name,
+      String id,
+      String alias,
       String image,
       String memoryLimit,
-      boolean mountSources,
+      Boolean mountSources,
       List<String> command,
       List<String> args,
       List<? extends Volume> volumes,
       List<? extends Env> env,
       List<? extends Endpoint> endpoints) {
-    this.name = name;
+    this.alias = alias;
     this.type = type;
+    this.componentId = id;
     this.image = image;
     this.memoryLimit = memoryLimit;
     this.mountSources = mountSources;
@@ -103,24 +195,34 @@ public class ComponentImpl implements Component {
 
   public ComponentImpl(
       String type,
-      String name,
+      String alias,
       String id,
+      Map<String, Serializable> preferences,
+      String registryUrl,
       String reference,
       String referenceContent,
+      Map<String, String> selector,
       List<? extends Entrypoint> entrypoints,
       String image,
       String memoryLimit,
-      boolean mountSources,
+      Boolean mountSources,
       List<String> command,
       List<String> args,
       List<? extends Volume> volumes,
       List<? extends Env> env,
       List<? extends Endpoint> endpoints) {
-    this.name = name;
+    this.alias = alias;
     this.type = type;
-    this.id = id;
+    this.componentId = id;
+    this.registryUrl = registryUrl;
+    if (preferences != null) {
+      this.preferences = new HashMap<>(preferences);
+    }
     this.reference = reference;
     this.referenceContent = referenceContent;
+    if (selector != null) {
+      this.selector = new HashMap<>(selector);
+    }
     if (entrypoints != null) {
       this.entrypoints =
           entrypoints.stream().map(EntrypointImpl::new).collect(toCollection(ArrayList::new));
@@ -145,10 +247,13 @@ public class ComponentImpl implements Component {
   public ComponentImpl(Component component) {
     this(
         component.getType(),
-        component.getName(),
+        component.getAlias(),
         component.getId(),
+        component.getPreferences(),
+        component.getRegistryUrl(),
         component.getReference(),
         component.getReferenceContent(),
+        component.getSelector(),
         component.getEntrypoints(),
         component.getImage(),
         component.getMemoryLimit(),
@@ -161,12 +266,12 @@ public class ComponentImpl implements Component {
   }
 
   @Override
-  public String getName() {
-    return name;
+  public String getAlias() {
+    return alias;
   }
 
-  public void setName(String name) {
-    this.name = name;
+  public void setAlias(String alias) {
+    this.alias = alias;
   }
 
   @Override
@@ -180,11 +285,31 @@ public class ComponentImpl implements Component {
 
   @Override
   public String getId() {
-    return id;
+    return componentId;
   }
 
   public void setId(String id) {
-    this.id = id;
+    this.componentId = id;
+  }
+
+  @Override
+  public String getRegistryUrl() {
+    return registryUrl;
+  }
+
+  public void setRegistryUrl(String registryUrl) {
+    this.registryUrl = registryUrl;
+  }
+
+  public Map<String, Serializable> getPreferences() {
+    if (preferences == null) {
+      preferences = new HashMap<>();
+    }
+    return preferences;
+  }
+
+  public void setPreferences(Map<String, Serializable> preferences) {
+    this.preferences = preferences;
   }
 
   @Override
@@ -248,11 +373,11 @@ public class ComponentImpl implements Component {
   }
 
   @Override
-  public boolean getMountSources() {
+  public Boolean getMountSources() {
     return mountSources;
   }
 
-  public void setMountSources(boolean mountSources) {
+  public void setMountSources(Boolean mountSources) {
     this.mountSources = mountSources;
   }
 
@@ -326,15 +451,18 @@ public class ComponentImpl implements Component {
     }
     ComponentImpl component = (ComponentImpl) o;
     return getMountSources() == component.getMountSources()
-        && Objects.equals(getName(), component.getName())
-        && Objects.equals(getType(), component.getType())
-        && Objects.equals(getId(), component.getId())
-        && Objects.equals(getReference(), component.getReference())
-        && Objects.equals(getReferenceContent(), component.getReferenceContent())
+        && Objects.equals(generatedId, component.generatedId)
+        && Objects.equals(alias, component.alias)
+        && Objects.equals(type, component.type)
+        && Objects.equals(componentId, component.componentId)
+        && Objects.equals(registryUrl, component.registryUrl)
+        && Objects.equals(reference, component.reference)
+        && Objects.equals(referenceContent, component.referenceContent)
+        && Objects.equals(image, component.image)
+        && Objects.equals(memoryLimit, component.memoryLimit)
+        && Objects.equals(getPreferences(), component.getPreferences())
         && Objects.equals(getSelector(), component.getSelector())
         && Objects.equals(getEntrypoints(), component.getEntrypoints())
-        && Objects.equals(getImage(), component.getImage())
-        && Objects.equals(getMemoryLimit(), component.getMemoryLimit())
         && Objects.equals(getCommand(), component.getCommand())
         && Objects.equals(getArgs(), component.getArgs())
         && Objects.equals(getVolumes(), component.getVolumes())
@@ -346,15 +474,18 @@ public class ComponentImpl implements Component {
   public int hashCode() {
 
     return Objects.hash(
-        getName(),
-        getType(),
-        getId(),
-        getReference(),
-        getReferenceContent(),
+        generatedId,
+        alias,
+        type,
+        componentId,
+        registryUrl,
+        reference,
+        referenceContent,
+        image,
+        memoryLimit,
+        getPreferences(),
         getSelector(),
         getEntrypoints(),
-        getImage(),
-        getMemoryLimit(),
         getMountSources(),
         getCommand(),
         getArgs(),
@@ -366,14 +497,19 @@ public class ComponentImpl implements Component {
   @Override
   public String toString() {
     return "ComponentImpl{"
-        + "name='"
-        + name
+        + "id='"
+        + componentId
+        + '\''
+        + "alias='"
+        + alias
         + '\''
         + ", type='"
         + type
         + '\''
-        + ", id='"
-        + id
+        + ", preferences="
+        + preferences
+        + ", registryUrl='"
+        + registryUrl
         + '\''
         + ", reference='"
         + reference

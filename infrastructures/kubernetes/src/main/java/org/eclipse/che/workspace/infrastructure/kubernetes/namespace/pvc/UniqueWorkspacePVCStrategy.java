@@ -20,6 +20,7 @@ import java.util.HashMap;
 import java.util.Map;
 import java.util.function.Function;
 import javax.inject.Inject;
+import javax.inject.Named;
 import org.eclipse.che.api.core.model.workspace.Workspace;
 import org.eclipse.che.api.core.model.workspace.runtime.RuntimeIdentity;
 import org.eclipse.che.api.workspace.server.spi.InfrastructureException;
@@ -80,13 +81,16 @@ public class UniqueWorkspacePVCStrategy implements WorkspaceVolumesStrategy {
   private final EphemeralWorkspaceAdapter ephemeralWorkspaceAdapter;
   private final PVCProvisioner pvcProvisioner;
   private final SubPathPrefixes subpathPrefixes;
+  private final boolean waitBound;
 
   @Inject
   public UniqueWorkspacePVCStrategy(
+      @Named("che.infra.kubernetes.pvc.wait_bound") boolean waitBound,
       KubernetesNamespaceFactory factory,
       EphemeralWorkspaceAdapter ephemeralWorkspaceAdapter,
       PVCProvisioner pvcProvisioner,
       SubPathPrefixes subpathPrefixes) {
+    this.waitBound = waitBound;
     this.factory = factory;
     this.ephemeralWorkspaceAdapter = ephemeralWorkspaceAdapter;
     this.pvcProvisioner = pvcProvisioner;
@@ -108,7 +112,7 @@ public class UniqueWorkspacePVCStrategy implements WorkspaceVolumesStrategy {
         new HashMap<>(k8sEnv.getPersistentVolumeClaims());
 
     k8sEnv.getPersistentVolumeClaims().clear();
-    fillInExistingPVCs(k8sEnv, workspaceId);
+    fillInExistingPVCs(k8sEnv, identity);
 
     pvcProvisioner.provision(k8sEnv, userDefinedPVCs);
 
@@ -123,8 +127,10 @@ public class UniqueWorkspacePVCStrategy implements WorkspaceVolumesStrategy {
 
   @Traced
   @Override
-  public void prepare(KubernetesEnvironment k8sEnv, String workspaceId, long timeoutMillis)
+  public void prepare(KubernetesEnvironment k8sEnv, RuntimeIdentity identity, long timeoutMillis)
       throws InfrastructureException {
+    String workspaceId = identity.getWorkspaceId();
+
     TracingTags.WORKSPACE_ID.set(workspaceId);
 
     if (EphemeralWorkspaceUtility.isEphemeral(k8sEnv.getAttributes())) {
@@ -137,13 +143,15 @@ public class UniqueWorkspacePVCStrategy implements WorkspaceVolumesStrategy {
     }
 
     final KubernetesPersistentVolumeClaims k8sClaims =
-        factory.create(workspaceId).persistentVolumeClaims();
+        factory.getOrCreate(identity).persistentVolumeClaims();
     LOG.debug("Creating PVCs for workspace '{}'", workspaceId);
     k8sClaims.createIfNotExist(k8sEnv.getPersistentVolumeClaims().values());
 
-    LOG.debug("Waiting PVCs for workspace '{}' to be bound", workspaceId);
-    for (PersistentVolumeClaim pvc : k8sEnv.getPersistentVolumeClaims().values()) {
-      k8sClaims.waitBound(pvc.getMetadata().getName(), timeoutMillis);
+    if (waitBound) {
+      LOG.debug("Waiting for PVC(s) of workspace '{}' to be bound", workspaceId);
+      for (PersistentVolumeClaim pvc : k8sEnv.getPersistentVolumeClaims().values()) {
+        k8sClaims.waitBound(pvc.getMetadata().getName(), timeoutMillis);
+      }
     }
     LOG.debug("Preparing PVCs done for workspace '{}'", workspaceId);
   }
@@ -153,20 +161,19 @@ public class UniqueWorkspacePVCStrategy implements WorkspaceVolumesStrategy {
     if (EphemeralWorkspaceUtility.isEphemeral(workspace)) {
       return;
     }
-    String workspaceId = workspace.getId();
     factory
-        .create(workspaceId)
+        .get(workspace)
         .persistentVolumeClaims()
-        .delete(ImmutableMap.of(CHE_WORKSPACE_ID_LABEL, workspaceId));
+        .delete(ImmutableMap.of(CHE_WORKSPACE_ID_LABEL, workspace.getId()));
   }
 
-  private void fillInExistingPVCs(KubernetesEnvironment k8sEnv, String workspaceId)
+  private void fillInExistingPVCs(KubernetesEnvironment k8sEnv, RuntimeIdentity identity)
       throws InfrastructureException {
     Map<String, PersistentVolumeClaim> existingPVCs =
         factory
-            .create(workspaceId)
+            .getOrCreate(identity)
             .persistentVolumeClaims()
-            .getByLabel(CHE_WORKSPACE_ID_LABEL, workspaceId)
+            .getByLabel(CHE_WORKSPACE_ID_LABEL, identity.getWorkspaceId())
             .stream()
             .collect(toMap(pvc -> pvc.getMetadata().getName(), Function.identity()));
 

@@ -10,11 +10,12 @@
  *   Red Hat, Inc. - initial API and implementation
  */
 'use strict';
-import {CheWorkspace} from '../../../components/api/workspace/che-workspace.factory';
+import { CheWorkspace } from '../../../components/api/workspace/che-workspace.factory';
 import IdeSvc from '../../../app/ide/ide.service';
-import {CheBranding} from '../../../components/branding/che-branding.factory';
-import {WorkspacesService} from '../../workspaces/workspaces.service';
-import {CheNotification} from '../../../components/notification/che-notification.factory';
+import { CheBranding } from '../../../components/branding/che-branding.factory';
+import { WorkspacesService } from '../../workspaces/workspaces.service';
+import { CheNotification } from '../../../components/notification/che-notification.factory';
+import { WorkspaceDetailsService } from '../../workspaces/workspace-details/workspace-details.service';
 
 
 const MAX_RECENT_WORKSPACES_ITEMS: number = 5;
@@ -27,7 +28,18 @@ const MAX_RECENT_WORKSPACES_ITEMS: number = 5;
  */
 export class NavbarRecentWorkspacesController {
 
-  static $inject = ['ideSvc', 'cheWorkspace', 'cheBranding', '$window', '$log', '$scope', '$rootScope', 'workspacesService', 'cheNotification'];
+  static $inject = [
+    'ideSvc',
+    'cheWorkspace',
+    'cheBranding',
+    '$window',
+    '$log',
+    '$scope',
+    '$rootScope',
+    'workspacesService',
+    'cheNotification',
+    'workspaceDetailsService'
+  ];
 
   cheWorkspace: CheWorkspace;
   dropdownItemTempl: Array<any>;
@@ -35,6 +47,7 @@ export class NavbarRecentWorkspacesController {
   recentWorkspaces: Array<che.IWorkspace>;
   workspaceUpdated: Map<string, number>;
   veryRecentWorkspaceId: string;
+  workspaceNameById: Map<string, string> = new Map();
   ideSvc: IdeSvc;
   $scope: ng.IScope;
   $log: ng.ILogService;
@@ -44,37 +57,37 @@ export class NavbarRecentWorkspacesController {
   workspaceCreationLink: string;
   workspacesService: WorkspacesService;
   cheNotification: CheNotification;
-
+  cheBranding: CheBranding;
+  workspaceDetailsService: WorkspaceDetailsService;
 
   /**
    * Default constructor
    */
-  constructor(ideSvc: IdeSvc,
-              cheWorkspace: CheWorkspace,
-              cheBranding: CheBranding,
-              $window: ng.IWindowService,
-              $log: ng.ILogService,
-              $scope: ng.IScope,
-              $rootScope: ng.IRootScopeService,
-              workspacesService: WorkspacesService,
-              cheNotification: CheNotification) {
+  constructor(
+    ideSvc: IdeSvc,
+    cheWorkspace: CheWorkspace,
+    cheBranding: CheBranding,
+    $window: ng.IWindowService,
+    $log: ng.ILogService,
+    $scope: ng.IScope,
+    $rootScope: ng.IRootScopeService,
+    workspacesService: WorkspacesService,
+    cheNotification: CheNotification,
+    workspaceDetailsService: WorkspaceDetailsService
+  ) {
     this.ideSvc = ideSvc;
     this.cheWorkspace = cheWorkspace;
     this.$log = $log;
     this.$window = $window;
     this.$rootScope = $rootScope;
-    this.workspaceCreationLink = cheBranding.getWorkspace().creationLink;
     this.workspacesService = workspacesService;
     this.cheNotification = cheNotification;
+    this.cheBranding = cheBranding;
+    this.workspaceDetailsService = workspaceDetailsService;
 
     // workspace updated time map by id
     this.workspaceUpdated = new Map();
-    // get workspaces
-    this.workspaces = cheWorkspace.getWorkspaces();
     this.recentWorkspaces = [];
-
-    // fetch workspaces when initializing
-    this.cheWorkspace.fetchWorkspaces();
 
     this.dropdownItems = {};
     this.dropdownItemTempl = [];
@@ -92,6 +105,16 @@ export class NavbarRecentWorkspacesController {
     }, () => {
       this.updateRecentWorkspaces();
     }, true);
+  }
+
+  $onInit(): void {
+    this.workspaceCreationLink = this.cheBranding.getWorkspace().creationLink;
+
+    // get workspaces
+    this.workspaces = this.cheWorkspace.getWorkspaces();
+
+    // fetch workspaces when initializing
+    this.cheWorkspace.fetchWorkspaces();
 
     this.updateRecentWorkspaces();
     this.fetchWorkspaceSettings();
@@ -157,6 +180,8 @@ export class NavbarRecentWorkspacesController {
    * Update recent workspaces
    */
   updateRecentWorkspaces(): void {
+    this.workspaceNameById.clear();
+
     if (!this.workspaces || this.workspaces.length === 0) {
       this.recentWorkspaces = [];
       return;
@@ -199,6 +224,10 @@ export class NavbarRecentWorkspacesController {
       }
     }
     this.recentWorkspaces = recentWorkspaces.slice(0, MAX_RECENT_WORKSPACES_ITEMS);
+
+    recentWorkspaces.forEach((workspace: che.IWorkspace) =>
+      this.workspaceNameById.set(workspace.id, this.cheWorkspace.getWorkspaceDataManager().getName(workspace))
+    );
   }
 
   /**
@@ -225,8 +254,7 @@ export class NavbarRecentWorkspacesController {
    * @returns {String}
    */
   getWorkspaceName(workspaceId: string): string {
-    let workspace = this.cheWorkspace.getWorkspaceById(workspaceId);
-    return workspace ? workspace.config.name : 'unknown';
+    return this.workspaceNameById.get(workspaceId) || 'unknown';
   }
 
   /**
@@ -256,7 +284,7 @@ export class NavbarRecentWorkspacesController {
    * @returns {string}
    */
   getIdeLink(workspace: che.IWorkspace): string {
-    return '#/ide/' + (workspace ? (workspace.namespace + '/' + workspace.config.name) : 'unknown');
+    return '#/ide/' + (workspace ? (workspace.namespace + '/' + this.cheWorkspace.getWorkspaceDataManager().getName(workspace)) : 'unknown');
   }
 
   /**
@@ -265,7 +293,7 @@ export class NavbarRecentWorkspacesController {
    * @returns {string}
    */
   getWorkspaceDetailsLink(workspace: che.IWorkspace): string {
-    return '#/workspace/' + workspace.namespace + '/' + workspace.config.name;
+    return '#/workspace/' + workspace.namespace + '/' + this.cheWorkspace.getWorkspaceDataManager().getName(workspace);
   }
 
   /**
@@ -315,6 +343,11 @@ export class NavbarRecentWorkspacesController {
    * @param workspaceId {String} workspace id
    */
   stopRecentWorkspace(workspaceId: string): void {
+    if (this.checkUnsavedChanges(workspaceId)) {
+      this.workspaceDetailsService.notifyUnsavedChangesDialog();
+      return;
+    }
+
     this.cheWorkspace.stopWorkspace(workspaceId).then(() => {
       angular.noop();
     }, (error: any) => {
@@ -328,10 +361,16 @@ export class NavbarRecentWorkspacesController {
    * @param workspaceId {String} workspace id
    */
   runRecentWorkspace(workspaceId: string): void {
+    if (this.checkUnsavedChanges(workspaceId)) {
+      this.workspaceDetailsService.notifyUnsavedChangesDialog();
+      return;
+    }
+
     let workspace = this.cheWorkspace.getWorkspaceById(workspaceId);
 
     this.updateRecentWorkspace(workspaceId);
-    this.cheWorkspace.startWorkspace(workspace.id, workspace.config.defaultEnv).catch((error: any) => {
+
+    this.cheWorkspace.startWorkspace(workspace.id, workspace.config ? workspace.config.defaultEnv : null).catch((error: any) => {
       this.$log.error(error);
       this.cheNotification.showError('Run workspace error.', error);
     });
@@ -346,4 +385,13 @@ export class NavbarRecentWorkspacesController {
   updateRecentWorkspace(workspaceId: string): void {
     this.$rootScope.$broadcast('recent-workspace:set', workspaceId);
   }
+
+  /**
+   * Returns `true` if workspace configuration has unsaved changes.
+   * @param id a workspace ID
+   */
+  checkUnsavedChanges(id: string): boolean {
+    return this.workspaceDetailsService.isWorkspaceConfigSaved(id) === false;
+  }
+
 }

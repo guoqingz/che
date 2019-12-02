@@ -26,15 +26,21 @@ import com.google.common.collect.ImmutableSet;
 import io.fabric8.kubernetes.api.model.ConfigMap;
 import io.fabric8.kubernetes.api.model.Pod;
 import io.fabric8.kubernetes.api.model.PodBuilder;
+import io.fabric8.kubernetes.api.model.Secret;
 import io.opentracing.Tracer;
 import java.util.List;
 import java.util.Set;
+import org.eclipse.che.api.core.model.workspace.runtime.RuntimeIdentity;
+import org.eclipse.che.api.workspace.server.model.impl.RuntimeIdentityImpl;
 import org.eclipse.che.api.workspace.server.spi.InternalInfrastructureException;
 import org.eclipse.che.api.workspace.server.wsplugins.model.ChePlugin;
+import org.eclipse.che.workspace.infrastructure.kubernetes.RuntimeLogsPublisher;
 import org.eclipse.che.workspace.infrastructure.kubernetes.environment.KubernetesEnvironment;
 import org.eclipse.che.workspace.infrastructure.kubernetes.namespace.KubernetesConfigsMaps;
 import org.eclipse.che.workspace.infrastructure.kubernetes.namespace.KubernetesDeployments;
 import org.eclipse.che.workspace.infrastructure.kubernetes.namespace.KubernetesNamespace;
+import org.eclipse.che.workspace.infrastructure.kubernetes.namespace.KubernetesSecrets;
+import org.eclipse.che.workspace.infrastructure.kubernetes.util.RuntimeEventsPublisher;
 import org.eclipse.che.workspace.infrastructure.kubernetes.util.UnrecoverablePodEventListener;
 import org.eclipse.che.workspace.infrastructure.kubernetes.util.UnrecoverablePodEventListenerFactory;
 import org.eclipse.che.workspace.infrastructure.kubernetes.wsplugins.BrokersResult;
@@ -53,19 +59,24 @@ import org.testng.annotations.Test;
 @Listeners(MockitoTestNGListener.class)
 public class DeployBrokerTest {
 
-  public static final String PLUGIN_BROKER_POD_NAME = "pluginBrokerPodName";
+  private static final String PLUGIN_BROKER_POD_NAME = "pluginBrokerPodName";
+  private static final RuntimeIdentity RUNTIME_ID =
+      new RuntimeIdentityImpl("workspaceId", "env", "userId", "infraNamespace");
   @Mock private BrokerPhase nextBrokerPhase;
 
   @Mock private KubernetesNamespace k8sNamespace;
   @Mock private KubernetesDeployments k8sDeployments;
   @Mock private KubernetesConfigsMaps k8sConfigMaps;
+  @Mock private KubernetesSecrets k8sSecrets;
 
   @Mock private KubernetesEnvironment k8sEnvironment;
   @Mock private ConfigMap configMap;
+  @Mock private Secret tlsSecret;
   private Pod pod;
 
   @Mock private BrokersResult brokersResult;
   @Mock private UnrecoverablePodEventListenerFactory unrecoverableEventListenerFactory;
+  @Mock private RuntimeEventsPublisher runtimeEventPublisher;
 
   @Mock(answer = Answers.RETURNS_MOCKS)
   private Tracer tracer;
@@ -78,11 +89,12 @@ public class DeployBrokerTest {
   public void setUp() throws Exception {
     deployBrokerPhase =
         new DeployBroker(
-            "workspaceId",
+            RUNTIME_ID,
             k8sNamespace,
             k8sEnvironment,
             brokersResult,
             unrecoverableEventListenerFactory,
+            runtimeEventPublisher,
             tracer);
     deployBrokerPhase.then(nextBrokerPhase);
 
@@ -90,10 +102,12 @@ public class DeployBrokerTest {
 
     when(k8sNamespace.configMaps()).thenReturn(k8sConfigMaps);
     when(k8sNamespace.deployments()).thenReturn(k8sDeployments);
+    when(k8sNamespace.secrets()).thenReturn(k8sSecrets);
 
     pod = new PodBuilder().withNewMetadata().withName(PLUGIN_BROKER_POD_NAME).endMetadata().build();
     when(k8sEnvironment.getPodsCopy()).thenReturn(ImmutableMap.of(PLUGIN_BROKER_POD_NAME, pod));
     when(k8sEnvironment.getConfigMaps()).thenReturn(ImmutableMap.of("configMap", configMap));
+    when(k8sEnvironment.getSecrets()).thenReturn(ImmutableMap.of("secret", tlsSecret));
 
     when(k8sDeployments.create(any())).thenReturn(pod);
   }
@@ -107,10 +121,12 @@ public class DeployBrokerTest {
     assertSame(result, plugins);
     verify(k8sConfigMaps).create(configMap);
     verify(k8sDeployments).create(pod);
+    verify(k8sSecrets).create(tlsSecret);
 
     verify(k8sDeployments).stopWatch();
     verify(k8sDeployments).delete();
     verify(k8sConfigMaps).delete();
+    verify(k8sSecrets).delete();
   }
 
   @Test
@@ -132,6 +148,17 @@ public class DeployBrokerTest {
   }
 
   @Test
+  public void shouldListenToPodEventsToPropagateThemAsLogs() throws Exception {
+    // given
+    // when
+    deployBrokerPhase.execute();
+
+    // then
+    verify(k8sDeployments).watchEvents(any(RuntimeLogsPublisher.class));
+    verify(k8sDeployments).stopWatch();
+  }
+
+  @Test
   public void shouldDoNotListenToUnrecoverableEventsIfFactoryIsConfigured() throws Exception {
     // given
     when(unrecoverableEventListenerFactory.isConfigured()).thenReturn(false);
@@ -143,7 +170,7 @@ public class DeployBrokerTest {
     verify(unrecoverableEventListenerFactory).isConfigured();
     verify(unrecoverableEventListenerFactory, never())
         .create(eq(ImmutableSet.of(PLUGIN_BROKER_POD_NAME)), any());
-    verify(k8sDeployments, never()).watchEvents(any());
+    verify(k8sDeployments, never()).watchEvents(any(UnrecoverablePodEventListener.class));
     verify(k8sDeployments).stopWatch();
   }
 

@@ -20,18 +20,16 @@ import {CheBranding} from '../../branding/che-branding.factory';
 import {CheEnvironmentManager} from '../environment/che-environment-manager.factory';
 import {CheRecipeTypes} from '../recipe/che-recipe-types';
 import {CheNotification} from '../../notification/che-notification.factory';
+import {WorkspaceDataManager} from './workspace-data-manager';
 
 const WS_AGENT_HTTP_LINK: string = 'wsagent/http';
 const WS_AGENT_WS_LINK: string = 'wsagent/ws';
 
-interface IWorkspaceSettings {
-  supportedRecipeTypes: string;
-  cheWorkspacePluginRegistryUrl: string;
-}
-
 interface ICHELicenseResource<T> extends ng.resource.IResourceClass<T> {
   create: any;
   createWithNamespace: any;
+  createDevfile: any;
+  createDevfileWithNamespace: any;
   deleteWorkspace: any;
   updateWorkspace: any;
   addProject: any;
@@ -41,7 +39,7 @@ interface ICHELicenseResource<T> extends ng.resource.IResourceClass<T> {
   startWorkspaceWithNoEnvironment: any;
   startTemporaryWorkspace: any;
   addCommand: any;
-  getSettings: () => ng.resource.IResource<IWorkspaceSettings>;
+  getSettings: () => ng.resource.IResource<che.IWorkspaceSettings>;
 }
 
 export enum WorkspaceStatus {
@@ -78,7 +76,7 @@ export class CheWorkspace {
   private remoteWorkspaceAPI: ICHELicenseResource<any>;
   private lodash: any;
   private statusDefers: Object;
-  private workspaceSettings: any;
+  private workspaceSettings: che.IWorkspaceSettings;
   private jsonRpcApiLocation: string;
   private workspaceLoaderUrl: string;
   /**
@@ -88,7 +86,11 @@ export class CheWorkspace {
   /**
    * Map with promises.
    */
-  private workspacePromises: Map<string, ng.IHttpPromise<any>> = new Map();
+  private workspacePromises: Map<string, ng.IPromise<any>> = new Map();
+  /**
+   *
+   */
+  private workspaceDataManager: WorkspaceDataManager;
 
   /**
    * Default constructor that is using resource
@@ -115,6 +117,7 @@ export class CheWorkspace {
     this.$websocket = $websocket;
     this.lodash = lodash;
     this.cheNotification = cheNotification;
+    this.workspaceDataManager = new WorkspaceDataManager();
 
     // current list of workspaces
     this.workspaces = [];
@@ -140,6 +143,8 @@ export class CheWorkspace {
         // having 2 methods for creation to ensure namespace parameter won't be send at all if value is null or undefined
         create: {method: 'POST', url: '/api/workspace'},
         createWithNamespace: {method: 'POST', url: '/api/workspace?namespace=:namespace'},
+        createDevfile: {method: 'POST', url: '/api/workspace/devfile'},
+        createDevfileWithNamespace: {method: 'POST', url: '/api/workspace/devfile?namespace=:namespace'},
         deleteWorkspace: {method: 'DELETE', url: '/api/workspace/:workspaceId'},
         updateWorkspace: {method: 'PUT', url: '/api/workspace/:workspaceId'},
         addProject: {method: 'POST', url: '/api/workspace/:workspaceId/project'},
@@ -155,11 +160,9 @@ export class CheWorkspace {
 
     let recipeTypes: Array<string> = CheRecipeTypes.getValues();
 
-    let keycloakToken = keycloakAuth.isPresent ? '?token=' + keycloakAuth.keycloak.token : '';
     const CONTEXT_FETCHER_ID = 'websocketContextFetcher';
     const callback = () => {
       this.jsonRpcApiLocation = this.formJsonRpcApiLocation($location, proxySettings, userDashboardConfig.developmentMode) + cheBranding.getWebsocketContext();
-      this.jsonRpcApiLocation += keycloakToken;
       this.cheJsonRpcMasterApi = cheJsonRpcApi.getJsonRpcMasterApi(this.jsonRpcApiLocation);
       cheBranding.unregisterCallback(CONTEXT_FETCHER_ID);
     };
@@ -219,7 +222,6 @@ export class CheWorkspace {
     if (this.workspaceAgents.has(workspaceId)) {
       return this.workspaceAgents.get(workspaceId);
     }
-
     const runtimeConfig = this.getWorkspaceById(workspaceId).runtime;
     if (runtimeConfig) {
       const machineToken = runtimeConfig.machineToken;
@@ -235,6 +237,10 @@ export class CheWorkspace {
           wsAgentWebocketLink = machine.servers[WS_AGENT_WS_LINK];
         }
       });
+
+      if (!wsAgentLink) {
+        return null;
+      }
 
       const workspaceAgentData: IWorkspaceAgentData = {
         path: wsAgentLink.url,
@@ -284,7 +290,7 @@ export class CheWorkspace {
 
   getWorkspaceByName(namespace: string, name: string): che.IWorkspace {
     return this.lodash.find(this.workspaces, (workspace: che.IWorkspace) => {
-      return workspace.namespace === namespace && workspace.config.name === name;
+      return workspace.namespace === namespace && this.workspaceDataManager.getName(workspace) === name;
     });
   }
 
@@ -293,9 +299,9 @@ export class CheWorkspace {
    *
    * @param namespace namespace
    */
-  fetchWorkspacesByNamespace(namespace: string): ng.IPromise<any> {
+  fetchWorkspacesByNamespace(namespace: string): ng.IPromise<void> {
     let promise = this.$http.get('/api/workspace/namespace/' + namespace);
-    let resultPromise = promise.then((response: { data: che.IWorkspace[] }) => {
+    let resultPromise = promise.then((response: ng.IHttpResponse<che.IWorkspace[]>) => {
       const workspaces = this.getWorkspacesByNamespace(namespace);
 
       workspaces.length = 0;
@@ -381,7 +387,7 @@ export class CheWorkspace {
     }
     const defer = this.$q.defer();
     const promise: ng.IHttpPromise<any> = this.$http.get('/api/workspace/' + workspaceKey);
-    this.workspacePromises.set(workspacePromisesKey, promise);
+    this.workspacePromises.set(workspacePromisesKey, defer.promise);
 
     promise.then((response: ng.IHttpPromiseCallbackArg<che.IWorkspace>) => {
       const workspace = response.data;
@@ -396,6 +402,34 @@ export class CheWorkspace {
       defer.reject(error);
     }).finally(() => {
       this.workspacePromises.delete(workspacePromisesKey);
+    });
+
+    return defer.promise;
+  }
+
+  /**
+   * Validates machine token for the workspace
+   * 
+   * @param workspaceId workspace ID
+   * @param token Che machine token
+   */
+  validateMachineToken(workspaceId: string, token: string): ng.IPromise<any> {
+    const defer = this.$q.defer();
+
+    const promise: ng.IHttpPromise<any> = this.$http.get(`/api/workspace/${workspaceId}`, {
+      headers: {
+        'Authorization': `Bearer ${token}`
+      }
+    });
+
+    promise.then((response: ng.IHttpPromiseCallbackArg<che.IWorkspace>) => {
+      defer.resolve();
+    }, (error: any) => {
+      if (error && error.status === 304) {
+        defer.resolve();
+        return;
+      }
+      defer.reject(error);
     });
 
     return defer.promise;
@@ -450,8 +484,7 @@ export class CheWorkspace {
         'recipe': null,
         'machines': {
           'dev-machine': {
-            'attributes': {'memoryLimitBytes': ram},
-            'installers': ['org.eclipse.che.ws-agent', 'org.eclipse.che.exec', 'org.eclipse.che.terminal', 'org.eclipse.che.ssh']
+            'attributes': {'memoryLimitBytes': ram}
           }
         }
       };
@@ -483,8 +516,7 @@ export class CheWorkspace {
       devMachine = {
         'name': 'ws-machine',
         'attributes': {'memoryLimitBytes': ram},
-        'type': 'docker',
-        'installers': ['org.eclipse.che.ws-agent', 'org.eclipse.che.exec', 'org.eclipse.che.terminal', 'org.eclipse.che.ssh']
+        'type': 'docker'
       };
       defaultEnvironment.machines[devMachine.name] = devMachine;
     } else {
@@ -527,6 +559,17 @@ export class CheWorkspace {
       this.remoteWorkspaceAPI.create({attribute: attrs}, workspaceConfig).$promise;
   }
 
+  createWorkspaceFromDevfile(namespace: string, devfile: che.IWorkspaceDevfile, attributes: any): ng.IPromise<any> {
+    let attrs = this.lodash.map(this.lodash.pairs(attributes || {}), (item: any) => {
+      return item[0] + ':' + item[1];
+    });
+    return namespace ? this.remoteWorkspaceAPI.createDevfileWithNamespace({
+      namespace: namespace,
+      attribute: attrs
+    }, devfile).$promise :
+      this.remoteWorkspaceAPI.createDevfile({attribute: attrs}, devfile).$promise;
+  }
+
   /**
    * Add a command into the workspace
    * @param workspaceId {string} the id of the workspace on which we want to add the command
@@ -561,8 +604,8 @@ export class CheWorkspace {
 
   /**
    * Notify user if workspace is ephemeral.
-   * 
-   * @param workspaceId 
+   *
+   * @param workspaceId
    */
   notifyIfEphemeral(workspaceId: string): void {
     let workspace = this.workspacesById.get(workspaceId);
@@ -740,7 +783,7 @@ export class CheWorkspace {
    */
   fetchWorkspaceSettings(): ng.IPromise<any> {
     const promise = this.remoteWorkspaceAPI.getSettings().$promise;
-    return promise.then((settings: IWorkspaceSettings) => {
+    return promise.then((settings: che.IWorkspaceSettings) => {
       this.workspaceSettings = settings;
       return this.workspaceSettings;
     }, (error: any) => {
@@ -769,12 +812,16 @@ export class CheWorkspace {
    *
    * @returns {any} the system settings for workspaces
    */
-  getWorkspaceSettings(): IWorkspaceSettings {
+  getWorkspaceSettings(): che.IWorkspaceSettings {
     return this.workspaceSettings;
   }
 
   getJsonRpcApiLocation(): string {
     return this.jsonRpcApiLocation;
+  }
+
+  getWorkspaceDataManager(): WorkspaceDataManager {
+    return this.workspaceDataManager;
   }
 
   private updateWorkspacesList(workspace: che.IWorkspace): void {

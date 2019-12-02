@@ -11,8 +11,9 @@
  */
 package org.eclipse.che.workspace.infrastructure.kubernetes.namespace;
 
-import static org.mockito.ArgumentMatchers.anyString;
-import static org.mockito.Mockito.doNothing;
+import static org.mockito.ArgumentMatchers.any;
+import static org.mockito.ArgumentMatchers.eq;
+import static org.mockito.Mockito.lenient;
 import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.spy;
 import static org.mockito.Mockito.verify;
@@ -38,14 +39,15 @@ public class RemoveNamespaceOnWorkspaceRemoveTest {
   private static final String WORKSPACE_ID = "workspace123";
 
   @Mock private Workspace workspace;
+  @Mock private KubernetesNamespaceFactory namespaceFactory;
 
   private RemoveNamespaceOnWorkspaceRemove removeNamespaceOnWorkspaceRemove;
 
   @BeforeMethod
   public void setUp() throws Exception {
-    removeNamespaceOnWorkspaceRemove = spy(new RemoveNamespaceOnWorkspaceRemove(null, null));
+    removeNamespaceOnWorkspaceRemove = spy(new RemoveNamespaceOnWorkspaceRemove(namespaceFactory));
 
-    doNothing().when(removeNamespaceOnWorkspaceRemove).doRemoveNamespace(anyString());
+    lenient().doNothing().when(namespaceFactory).deleteIfManaged(any());
 
     when(workspace.getId()).thenReturn(WORKSPACE_ID);
   }
@@ -60,9 +62,10 @@ public class RemoveNamespaceOnWorkspaceRemoveTest {
   }
 
   @Test
-  public void shouldRemoveNamespaceOnWorkspaceRemovedEvent() throws Exception {
+  public void shouldRemoveNamespaceIfManagedOnWorkspaceRemovedEventIfNamespaceIsManaged()
+      throws Exception {
     removeNamespaceOnWorkspaceRemove.onEvent(new WorkspaceRemovedEvent(workspace));
 
-    verify(removeNamespaceOnWorkspaceRemove).doRemoveNamespace(WORKSPACE_ID);
+    verify(namespaceFactory).deleteIfManaged(eq(workspace));
   }
 }

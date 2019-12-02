@@ -52,7 +52,6 @@ export class EnvVariablesController {
     this.$mdDialog = $mdDialog;
     this.confirmDialogService = confirmDialogService;
 
-    this.buildVariablesList(this.selectedMachine);
     const deRegistrationFn = $scope.$watch(() => {
       return this.selectedMachine;
     }, (selectedMachine: IEnvironmentManagerMachine) => {
@@ -62,6 +61,10 @@ export class EnvVariablesController {
     $scope.$on('$destroy', () => {
       deRegistrationFn();
     });
+  }
+
+  $onInit(): void {
+    this.buildVariablesList(this.selectedMachine);
   }
 
   /**
@@ -187,7 +190,7 @@ export class EnvVariablesController {
    * @param variableName {string}
    */
   deleteEnvVariable(variableName: string): void {
-    const promise = this.confirmDialogService.showConfirmDialog('Remove variable', 'Would you like to delete this variable?', 'Delete');
+    const promise = this.confirmDialogService.showConfirmDialog('Remove variable', 'Would you like to delete this variable?', { resolve: 'Delete' });
     promise.then(() => {
       delete this.envVariables[variableName];
       this.environmentManager.setEnvVariables(this.selectedMachine, this.envVariables);
@@ -209,6 +212,6 @@ export class EnvVariablesController {
       content += 'this selected variable?';
     }
 
-    return this.confirmDialogService.showConfirmDialog('Remove variables', content, 'Delete');
+    return this.confirmDialogService.showConfirmDialog('Remove variables', content, { resolve: 'Delete' });
   }
 }

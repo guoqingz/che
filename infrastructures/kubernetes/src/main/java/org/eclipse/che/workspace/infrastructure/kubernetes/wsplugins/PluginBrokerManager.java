@@ -21,7 +21,7 @@ import org.eclipse.che.api.core.model.workspace.runtime.RuntimeIdentity;
 import org.eclipse.che.api.core.notification.EventService;
 import org.eclipse.che.api.workspace.server.spi.InfrastructureException;
 import org.eclipse.che.api.workspace.server.wsplugins.model.ChePlugin;
-import org.eclipse.che.api.workspace.server.wsplugins.model.PluginMeta;
+import org.eclipse.che.api.workspace.server.wsplugins.model.PluginFQN;
 import org.eclipse.che.commons.annotation.Traced;
 import org.eclipse.che.workspace.infrastructure.kubernetes.KubernetesEnvironmentProvisioner;
 import org.eclipse.che.workspace.infrastructure.kubernetes.StartSynchronizer;
@@ -30,6 +30,7 @@ import org.eclipse.che.workspace.infrastructure.kubernetes.namespace.KubernetesN
 import org.eclipse.che.workspace.infrastructure.kubernetes.namespace.KubernetesNamespaceFactory;
 import org.eclipse.che.workspace.infrastructure.kubernetes.namespace.pvc.EphemeralWorkspaceUtility;
 import org.eclipse.che.workspace.infrastructure.kubernetes.namespace.pvc.WorkspaceVolumesStrategy;
+import org.eclipse.che.workspace.infrastructure.kubernetes.util.RuntimeEventsPublisher;
 import org.eclipse.che.workspace.infrastructure.kubernetes.util.UnrecoverablePodEventListenerFactory;
 import org.eclipse.che.workspace.infrastructure.kubernetes.wsplugins.brokerphases.BrokerEnvironmentFactory;
 import org.eclipse.che.workspace.infrastructure.kubernetes.wsplugins.brokerphases.DeployBroker;
@@ -60,6 +61,7 @@ public class PluginBrokerManager<E extends KubernetesEnvironment> {
   private final BrokerEnvironmentFactory<E> brokerEnvironmentFactory;
   private final KubernetesEnvironmentProvisioner<E> environmentProvisioner;
   private final UnrecoverablePodEventListenerFactory unrecoverablePodEventListenerFactory;
+  private final RuntimeEventsPublisher runtimeEventsPublisher;
   private final Tracer tracer;
 
   @Inject
@@ -72,6 +74,7 @@ public class PluginBrokerManager<E extends KubernetesEnvironment> {
       BrokerEnvironmentFactory<E> brokerEnvironmentFactory,
       UnrecoverablePodEventListenerFactory unrecoverablePodEventListenerFactory,
       @Named("che.workspace.plugin_broker.wait_timeout_min") int pluginBrokerWaitingTimeout,
+      RuntimeEventsPublisher runtimeEventsPublisher,
       Tracer tracer) {
     this.factory = factory;
     this.eventService = eventService;
@@ -81,6 +84,7 @@ public class PluginBrokerManager<E extends KubernetesEnvironment> {
     this.environmentProvisioner = environmentProvisioner;
     this.pluginBrokerWaitingTimeout = pluginBrokerWaitingTimeout;
     this.unrecoverablePodEventListenerFactory = unrecoverablePodEventListenerFactory;
+    this.runtimeEventsPublisher = runtimeEventsPublisher;
     this.tracer = tracer;
   }
 
@@ -93,29 +97,28 @@ public class PluginBrokerManager<E extends KubernetesEnvironment> {
   @Beta
   @Traced
   public List<ChePlugin> getTooling(
-      RuntimeIdentity runtimeID,
+      RuntimeIdentity identity,
       StartSynchronizer startSynchronizer,
-      Collection<PluginMeta> pluginsMeta,
+      Collection<PluginFQN> pluginFQNs,
       boolean isEphemeral)
       throws InfrastructureException {
 
-    String workspaceId = runtimeID.getWorkspaceId();
-    KubernetesNamespace kubernetesNamespace = factory.create(workspaceId);
+    String workspaceId = identity.getWorkspaceId();
+    KubernetesNamespace kubernetesNamespace = factory.getOrCreate(identity);
     BrokersResult brokersResult = new BrokersResult();
 
-    E brokerEnvironment = brokerEnvironmentFactory.create(pluginsMeta, runtimeID, brokersResult);
+    E brokerEnvironment = brokerEnvironmentFactory.create(pluginFQNs, identity);
     if (isEphemeral) {
       EphemeralWorkspaceUtility.makeEphemeral(brokerEnvironment.getAttributes());
     }
-    environmentProvisioner.provision(brokerEnvironment, runtimeID);
+    environmentProvisioner.provision(brokerEnvironment, identity);
 
     ListenBrokerEvents listenBrokerEvents = getListenEventPhase(workspaceId, brokersResult);
     PrepareStorage prepareStorage =
-        getPrepareStoragePhase(workspaceId, startSynchronizer, brokerEnvironment);
+        getPrepareStoragePhase(identity, startSynchronizer, brokerEnvironment);
     WaitBrokerResult waitBrokerResult = getWaitBrokerPhase(workspaceId, brokersResult);
     DeployBroker deployBroker =
-        getDeployBrokerPhase(
-            runtimeID.getWorkspaceId(), kubernetesNamespace, brokerEnvironment, brokersResult);
+        getDeployBrokerPhase(identity, kubernetesNamespace, brokerEnvironment, brokersResult);
     LOG.debug("Entering plugin brokers deployment chain workspace '{}'", workspaceId);
     listenBrokerEvents.then(prepareStorage).then(deployBroker).then(waitBrokerResult);
     return listenBrokerEvents.execute();
@@ -126,24 +129,25 @@ public class PluginBrokerManager<E extends KubernetesEnvironment> {
   }
 
   private PrepareStorage getPrepareStoragePhase(
-      String workspaceId,
+      RuntimeIdentity identity,
       StartSynchronizer startSynchronizer,
       KubernetesEnvironment brokerEnvironment) {
     return new PrepareStorage(
-        workspaceId, brokerEnvironment, volumesStrategy, startSynchronizer, tracer);
+        identity, brokerEnvironment, volumesStrategy, startSynchronizer, tracer);
   }
 
   private DeployBroker getDeployBrokerPhase(
-      String workspaceId,
+      RuntimeIdentity runtimeId,
       KubernetesNamespace kubernetesNamespace,
       KubernetesEnvironment brokerEnvironment,
       BrokersResult brokersResult) {
     return new DeployBroker(
-        workspaceId,
+        runtimeId,
         kubernetesNamespace,
         brokerEnvironment,
         brokersResult,
         unrecoverablePodEventListenerFactory,
+        runtimeEventsPublisher,
         tracer);
   }
 
